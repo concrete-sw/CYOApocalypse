@@ -20,7 +20,7 @@ import { conditions, describeInjuries } from '../engine/body.js';
 import * as store from '../engine/storage.js';
 
 const SPEED = { off: 0, fast: 4, normal: 12, slow: 28 };
-const IDLE_BANNER = 'CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS';
+const IDLE_BANNER = 'ROUTINE';
 
 export class App {
   constructor() {
@@ -55,17 +55,17 @@ export class App {
     else if (this.state) this.setWorldBanner();
   }
 
-  /** Full-width Emergency Alert System bars, top and bottom, coloured by alert level. */
+  /** The alert chip in the top bar, coloured by the world's alert level. */
   setBanner(level, text) {
-    for (const id of ['#bannerTop', '#bannerBottom']) { const el = $(id); el.className = `easbar lvl-${level}`; el.textContent = text; }
+    const el = $('#topAlert'); if (!el) return;
+    el.className = `alert-chip lvl-${level}`; el.textContent = text;
   }
   setWorldBanner() {
     const s = this.state; if (!s) return;
-    const region = (s.truth.region?.name || 'REGION').toUpperCase();
     const lvl = Math.max(1, Math.min(5, s.doom || 1));
     const calm = s.phase === 'prologue' && !s.ended;
-    const status = s.ended ? 'RECORD CLOSED' : calm ? 'NO ACTIVE WARNINGS' : DOOM_LABEL[lvl];
-    this.setBanner(calm ? 1 : lvl, `EMERGENCY ALERT SYSTEM · ${region} · ${status} · DAY ${dayOf(s.clock.minutes)}`);
+    this.setBanner(calm ? 1 : lvl, s.ended ? 'RECORD CLOSED' : calm ? 'ROUTINE' : DOOM_LABEL[lvl]);
+    $('#topRegion').textContent = (s.truth.region?.name || '').toUpperCase();
   }
 
   applySettings() {
@@ -212,14 +212,21 @@ export class App {
 
   // ---------------------------------------------------------------- desktop
   setupDesktop() {
-    this.wm = new WindowManager($('#windowArea'), $('#dock'));
+    this.wm = new WindowManager($('#windowArea'), $('#dock'), {
+      geometry: this.settings.windows || {},
+      onGeometry: (id, g) => { this.settings.windows = this.settings.windows || {}; this.settings.windows[id] = g; store.saveSettings(this.settings); }
+    });
     registerPanels(this);
-    this.wm.buildDock(DOCK_ORDER);
+    this.wm.buildDock(DOCK_ORDER, { tile: { icon: '⊞', title: 'Tile windows', run: () => this.wm.tile() } });
     $('#cmdBar').addEventListener('submit', e => { e.preventDefault(); const v = $('#cmdInput').value.trim(); if (!v) return; $('#cmdInput').value = ''; this.handleCommand(v); });
     document.addEventListener('keydown', e => {
       if (e.target.matches('input, textarea, select') && e.key !== 'Escape') return;
       if (e.key === '/') { e.preventDefault(); $('#cmdInput').focus(); }
-      if (e.altKey && /^[1-9]$/.test(e.key)) { const id = DOCK_ORDER.filter(x => x !== '---')[Number(e.key) - 1]; if (id) { e.preventDefault(); this.wm.show(id); } }
+      if (e.altKey && /^[1-9]$/.test(e.key)) { const id = DOCK_ORDER.filter(x => x !== '---' && x !== 'tile')[Number(e.key) - 1]; if (id) { e.preventDefault(); this.wm.show(id); } }
+      else if (!e.altKey && !e.ctrlKey && !e.metaKey && /^[1-4]$/.test(e.key) && this.state && !this.busy && !this.state.ended) {
+        const c = this.state.lastChoices[Number(e.key) - 1];
+        if (c) { e.preventDefault(); this.choose(c); }
+      }
     });
     window.addEventListener('beforeunload', () => this.autosave());
   }
@@ -249,7 +256,17 @@ export class App {
     const region = s.truth.region?.name || 'Region';
     $('#wmText').innerHTML = `<div class="wm-name">${esc(s.survivor.name.toUpperCase())}</div><div class="wm-id">${esc(s.survivor.id)}</div><div class="wm-region">${esc(region.toUpperCase())}</div><div class="wm-sub">SURVIVOR LIAISON RECORD</div>`;
     const saved = this.lastSave ? new Date(this.lastSave).toLocaleTimeString() : 'never';
-    $('#statusBar').textContent = `EOC LINK · ${region.toUpperCase()} · SURVIVOR ${s.survivor.name.toUpperCase()} (${s.survivor.id}) · GM ${this.provider.name.toUpperCase()} · TURN ${s.turnCount} · LAST SAVE ${saved}`;
+    const v = s.vitals; const sup = supplyDays(s);
+    const cell = (label, val, inverse = false) => { const lvl = inverse ? (val > 80 ? 'bad' : val > 50 ? 'warn' : '') : (val < 25 ? 'bad' : val < 50 ? 'warn' : ''); return h('span', { class: `v ${lvl}` }, `${label} `, h('b', {}, String(Math.round(val)))); };
+    const bar = clear($('#statusBar'));
+    append(bar, cell('HEALTH', v.health), cell('HUNGER', v.hunger), cell('THIRST', v.thirst), cell('REST', v.fatigue), cell('WARMTH', v.warmth), cell('MORALE', v.morale), cell((s.truth.apocalypse?.hazardName || 'HAZARD').toUpperCase(), v.hazard, true),
+      h('span', { class: 'v' }, `FOOD ${sup.food}d · WATER ${sup.water}d`), h('span', { class: 'v' }, `TURN ${s.turnCount} · SAVED ${saved}`));
+  }
+
+  resetLayout() {
+    this.settings.windows = {}; store.saveSettings(this.settings);
+    this.wm.forgetGeometry(); this.wm.closeAll(); this.wm.cascade = 0;
+    this.wm.show('log'); if (!this.wm.isNarrow()) { this.wm.show('status'); this.wm.focus('log'); }
   }
 
   setStatus(text, busy = false) {
@@ -526,6 +543,7 @@ export class App {
       case 'stock': case 'status': return this.takeStock();
       case 'inventory': case 'inv': case 'i': return this.wm.show('inventory');
       case 'map': case 'm': return this.wm.show('map');
+      case 'tile': return this.wm.tile();
       case 'hint': return this.hint(arg);
       case 'note': case 'n': { if (!arg) return this.wm.show('journal'); s.journal = (s.journal ? s.journal + '\n' : '') + arg; this.autosave(); this.wm.refresh('journal'); return toast('Note added.'); }
       case 'save': return this.wm.show('settings');

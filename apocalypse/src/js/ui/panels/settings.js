@@ -17,7 +17,8 @@ export function registerSettings(app, { S, reg }) {
         h('label', { class: 'check' }, chk(!!st.reduceMotion, v => { st.reduceMotion = v; }), 'Reduce motion (no scanlines, noise, blinking or typewriter)'),
         h('label', { class: 'check' }, chk(st.scanlines !== false, v => { st.scanlines = v; }), 'Scanlines'),
         h('label', { class: 'check' }, chk(st.noise !== false, v => { st.noise = v; }), 'Background noise texture'),
-        h('label', { class: 'check' }, chk(!!st.highContrast, v => { st.highContrast = v; }), 'High contrast text'));
+        h('label', { class: 'check' }, chk(!!st.highContrast, v => { st.highContrast = v; }), 'High contrast text'),
+        h('div', { class: 'row tight' }, h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.resetLayout() }, 'Reset window layout'), h('span', { class: 'muted small' }, 'Windows remember where you put them. Double-click a title bar or press ▢ to maximize; ⊞ Tile arranges every open window.')));
       append(body, h('h3', {}, 'Save slots'),
         h('ul', { class: 'slot-list' }, store.listSlots().map(sl => h('li', {},
           h('span', { class: 'slot-info' }, h('b', {}, sl.slot === 0 ? 'Autosave' : `Slot ${sl.slot}`), sl.empty ? 'empty' : `${sl.survivor} · ${sl.title} · day ${sl.day}${sl.ended ? ' · ENDED' : ''} · ${new Date(sl.savedAt).toLocaleString()}`),

@@ -12,8 +12,6 @@
 <a class="skip" href="#cmdInput">Skip to command bar</a>
 <div id="scanlines" aria-hidden="true"></div>
 <div id="noise" aria-hidden="true"></div>
-<div id="bannerTop" class="easbar lvl-1" role="banner">CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS</div>
-<div id="bannerBottom" class="easbar lvl-1" aria-hidden="true">CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS</div>
 
 <!-- BOOT -->
 <section id="screen-boot" class="screen" aria-label="Boot sequence">
@@ -145,6 +143,8 @@
 <section id="screen-desktop" class="screen hidden" aria-label="Operations desktop">
   <header class="topbar">
     <span class="sys">EOC · TERMINAL</span>
+    <span id="topAlert" class="alert-chip lvl-1" role="status">ROUTINE</span>
+    <span id="topRegion" class="mono region"></span>
     <span id="topDay" class="mono clock" aria-live="off"></span>
     <span id="topWeather" class="mono"></span>
     <span id="topDeadline" class="mono deadline"></span>

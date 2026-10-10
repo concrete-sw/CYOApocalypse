@@ -121,9 +121,10 @@ sometimes lies, hints that cost, consequences that bite later) live in
 - **Companions**: profiles, skills, mood, loyalty, everything they have said.
   Talk freely, give items, send them to scout, scavenge, hunt or stand guard.
   They eat from your stores every day. They remember.
-- **Map**: known locations plotted by position. Travel (shows time and risk),
-  look around, search specific areas, claim a shelter, trade with whoever
-  holds the place, recover a cache.
+- **Map**: known locations plotted by position; scroll or pinch to zoom, drag
+  to pan, arrow keys to move, `0` to fit. Travel (shows time and risk), look
+  around, search specific areas, claim a shelter, trade with whoever holds
+  the place, recover a cache.
 - **Shelter**: base or nomad. Defense, noise, stash, fortify, abandon. Bases
   can be raided at night; nomads are colder and rest worse.
 - **Radio**: tune a frequency or scan. Broadcasts keep schedules; some lie.
@@ -135,7 +136,7 @@ sometimes lies, hints that cost, consequences that bite later) live in
   typewriter speed, reduce motion, scanlines, noise, contrast, five save slots,
   export and import as JSON, and "End my story".
 - **Clock**: time of day matters. Nights multiply danger. The deadline counts
-  down in the top bar; the alert banners change colour as the world worsens.
+  down in the top bar and the alert chip changes colour as the world worsens.
 - **Debrief**: the outcome, a rating, the epitaph, the hidden story, the
   timeline, the people, the factions, and the option to continue as a new
   survivor in the same world, where everything you used up, built or broke
@@ -145,9 +146,12 @@ Difficulty (Survivor, Hardened, Nightmare) changes how fast the clocks run,
 how much there is to find, how hostile strangers are, and how many companions
 will betray you. Length is 14, 30 or 60 days.
 
-Keyboard: `/` focuses the command bar, `Alt+1..9` opens panels, `Esc` closes
-the focused panel, `Tab` moves through everything, and clicking streaming text
-skips the typewriter. The Help panel lists every command.
+Keyboard: `/` focuses the command bar, `1` to `4` pick a choice, `Alt+1..9`
+opens panels, `Esc` closes the focused panel, `Tab` moves through everything,
+and clicking streaming text skips the typewriter. Windows remember where you
+put them; double-click a title bar to maximize, and the Tile button arranges
+every open window. The live vitals strip at the bottom shows your numbers
+without opening Status. The Help panel lists every command.
 
 ## Adding a provider
 

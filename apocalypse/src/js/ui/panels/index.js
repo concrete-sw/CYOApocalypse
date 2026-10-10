@@ -12,7 +12,7 @@ import { registerFactions } from './factions.js';
 import { registerSettings } from './settings.js';
 import { registerHelp } from './help.js';
 
-export const DOCK_ORDER = ['log', 'status', 'inventory', 'companions', 'map', 'shelter', 'radio', 'journal', 'factions', '---', 'settings', 'help'];
+export const DOCK_ORDER = ['log', 'status', 'inventory', 'companions', 'map', 'shelter', 'radio', 'journal', 'factions', '---', 'tile', 'settings', 'help'];
 
 export function registerPanels(app) {
   const ctx = { S: () => app.state, reg: def => app.wm.register(def), readOnly: () => !!app.state?.ended };

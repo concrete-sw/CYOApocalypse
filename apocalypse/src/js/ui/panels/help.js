@@ -28,7 +28,7 @@ export function registerHelp(app, { reg }) {
           ['fight · run · hide · talk', 'during an encounter'], ['open <panel>', 'open a panel'], ['end my story', 'close the record'], ['<anything else>', 'a free action, narrated by the world']
         ].map(([c, d]) => h('tr', {}, h('td', {}, h('code', {}, c)), h('td', {}, d))))),
         h('h3', {}, 'Keys'),
-        h('p', { class: 'small' }, h('kbd', {}, '/'), ' focus the command bar · ', h('kbd', {}, 'Alt+1..9'), ' open panels · ', h('kbd', {}, 'Esc'), ' close the focused panel · click streaming text to skip the typewriter.'),
+        h('p', { class: 'small' }, h('kbd', {}, '/'), ' focus the command bar · ', h('kbd', {}, '1'), '–', h('kbd', {}, '4'), ' pick a choice · ', h('kbd', {}, 'Alt+1..9'), ' open panels · ', h('kbd', {}, 'Esc'), ' close the focused panel · double-click a title bar to maximize · ', h('kbd', {}, 'tile'), ' arranges windows · on the map: scroll to zoom, drag to pan, arrows to move, ', h('kbd', {}, '0'), ' to fit · click streaming text to skip the typewriter.'),
         h('p', { class: 'small muted' }, 'The Game Master is an AI model using your API key; the key never leaves your browser except to that provider. Autosave runs after every turn; five manual slots and a JSON export live in Settings.'));
     }
   });

@@ -29,7 +29,7 @@
   --font: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
   --radius: 3px;
   --dock-w: 180px;
-  --bar-h: 22px;
+  --bar-h: 0px;
 }
 body[data-theme="amber"] {
   --ink: #f0d9a8; --ink-dim: #b89c66; --ink-faint: #6e5c3b; --accent: #ffbf47; --accent-2: #d99a2b;
@@ -189,6 +189,10 @@ body.reduce-motion .topbar .status.busy::after { animation: none; }
 .win-head button:hover, .win-head button:focus-visible { color: var(--accent); border-color: var(--border); outline: none; }
 .win-body { flex: 1; overflow: auto; padding: 10px 12px; }
 .win-resize { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%); }
+.win.max { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; border-radius: 0; }
+.win.max .win-resize { display: none; }
+.dock button.action { color: var(--ink-faint); }
+.statusbar .v { margin-right: 12px; } .statusbar .v b { color: var(--ink-dim); font-weight: 600; } .statusbar .v.warn b { color: var(--warn); } .statusbar .v.bad b { color: var(--danger); }
 
 .statusbar {
   grid-area: status; font-size: 10.5px; letter-spacing: .08em; color: var(--ink-faint); background: var(--bg-2); border-top: 1px solid var(--border);
@@ -198,19 +202,18 @@ body.reduce-motion .topbar .status.busy::after { animation: none; }
 .cmdbar .prompt { margin: 0; color: var(--accent); text-transform: none; font-size: 13px; }
 .cmdbar input { flex: 1; }
 
-/* ---------- EAS banners, watermark ---------- */
-.easbar {
-  position: fixed; left: 0; right: 0; height: var(--bar-h); z-index: 70; display: flex; align-items: center; justify-content: center;
-  font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 12px; letter-spacing: .08em; color: #fff; text-transform: uppercase;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 10px; user-select: none;
+/* ---------- alert chip, watermark ---------- */
+.alert-chip {
+  display: inline-block; padding: 1px 8px; border-radius: 3px; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 11px; letter-spacing: .08em;
+  color: #fff; text-transform: uppercase; white-space: nowrap; user-select: none;
 }
-#bannerTop { top: 0; } #bannerBottom { bottom: 0; }
-.easbar.lvl-1 { background: #1b6e35; }
-.easbar.lvl-2 { background: #b8960a; color: #000; }
-.easbar.lvl-3 { background: #c9561a; }
-.easbar.lvl-4 { background: #b3121b; background-image: repeating-linear-gradient(45deg, transparent 0 14px, #ffffff12 14px 28px); }
-.easbar.lvl-5 { background: #150618; color: #ff5c5c; box-shadow: inset 0 0 0 1px #ff5c5c55; }
-.toasts { position: fixed; right: 14px; bottom: calc(var(--bar-h) + 60px); display: flex; flex-direction: column; gap: 6px; z-index: 60; max-width: 360px; }
+.alert-chip.lvl-1 { background: #1b6e35; }
+.alert-chip.lvl-2 { background: #b8960a; color: #000; }
+.alert-chip.lvl-3 { background: #c9561a; }
+.alert-chip.lvl-4 { background: #b3121b; background-image: repeating-linear-gradient(45deg, transparent 0 8px, #ffffff14 8px 16px); }
+.alert-chip.lvl-5 { background: #150618; color: #ff5c5c; box-shadow: inset 0 0 0 1px #ff5c5c88; }
+.topbar .region { color: var(--ink-dim); letter-spacing: .1em; }
+.toasts { position: fixed; right: 14px; bottom: 60px; display: flex; flex-direction: column; gap: 6px; z-index: 60; max-width: 360px; }
 
 .watermark {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
@@ -267,6 +270,10 @@ body.reduce-motion .cursor::after { animation: none; }
 
 /* vitals */
 .vitals { display: grid; gap: 5px; margin: 6px 0 10px; }
+.vitals.two { grid-template-columns: 1fr 1fr; column-gap: 16px; row-gap: 4px; margin: 4px 0 6px; }
+.injury { border-left: 2px solid var(--border); padding: 2px 8px; margin: 4px 0; font-size: 12px; }
+.injury .who { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .06em; }
+.injury .row.tight select { width: auto; max-width: 200px; padding: 3px 6px; font-size: 12px; }
 .vital { display: grid; grid-template-columns: 78px 1fr 46px; align-items: center; gap: 8px; font-size: 12px; }
 .vital .lbl { text-transform: uppercase; letter-spacing: .06em; color: var(--ink-dim); }
 .vital .val { text-align: right; color: var(--ink-dim); }
@@ -279,9 +286,10 @@ body.reduce-motion .cursor::after { animation: none; }
 .conds { display: flex; gap: 5px; flex-wrap: wrap; margin: 4px 0 8px; }
 
 /* body figure */
-.body-wrap { display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: start; }
+.body-wrap { display: grid; grid-template-columns: 104px 1fr; gap: 14px; align-items: start; }
 .body-fig svg { width: 100%; height: auto; display: block; }
-.body-fig .region { fill: #ffffff0a; stroke: var(--ink-dim); stroke-width: 1.2; cursor: pointer; transition: fill .3s; }
+.body-fig .region { fill: #ffffff0a; stroke: var(--ink-dim); stroke-width: 1; stroke-linejoin: round; cursor: pointer; transition: fill .3s; }
+.body-fig .contour { fill: none; stroke: var(--ink-faint); stroke-width: .6; pointer-events: none; }
 .body-fig .region:hover { stroke: var(--ink); }
 .body-fig .region.sev1 { fill: #ffd16655; }
 .body-fig .region.sev2 { fill: #ff9f1c88; }
@@ -289,7 +297,6 @@ body.reduce-motion .cursor::after { animation: none; }
 .body-fig .region.infected { animation: pulse 1.3s ease-in-out infinite; }
 .body-fig .region.treated { stroke-dasharray: 3 2; }
 .body-fig .region.sel { stroke: var(--accent); stroke-width: 2; }
-.body-fig .outline { fill: none; stroke: var(--ink-faint); stroke-width: .6; }
 body.reduce-motion .body-fig .region.infected { animation: none; }
 @keyframes pulse { 50% { opacity: .45; } }
 .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--ink-dim); margin-top: 6px; }
@@ -297,19 +304,25 @@ body.reduce-motion .body-fig .region.infected { animation: none; }
 .legend .s1 { background: #ffd16655; } .legend .s2 { background: #ff9f1c88; } .legend .s3 { background: #ff4040aa; }
 
 /* map */
-.map { position: relative; }
-.map svg { width: 100%; height: auto; max-height: 380px; display: block; background: var(--bg-2); border: 1px solid var(--border); }
-.map .grid line { stroke: var(--border); stroke-width: .25; opacity: .7; }
-.map .edge { stroke: var(--ink-faint); stroke-width: .5; stroke-dasharray: 1.5 1.5; }
+.map { position: relative; display: flex; flex-direction: column; flex: 1 1 55%; min-height: 220px; }
+.map .map-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 6px; }
+.map svg { flex: 1 1 0; height: 0; min-height: 200px; width: 100%; display: block; background: var(--bg-2); border: 1px solid var(--border); cursor: grab; touch-action: none; }
+.map svg:active { cursor: grabbing; }
+.map-details { flex: 1 1 45%; min-height: 160px; margin-top: 8px; overflow: auto; }
+.map .grid line { stroke: var(--border); stroke-width: 1px; opacity: .55; vector-effect: non-scaling-stroke; }
+.map .edge { stroke: var(--ink-faint); stroke-width: 1.2px; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .map .edge.sel { stroke: var(--accent); stroke-dasharray: none; }
 .map .node { cursor: pointer; }
-.map .node circle { fill: var(--panel); stroke: var(--ink-dim); stroke-width: 1; }
+.map .node circle { fill: var(--panel); stroke: var(--ink-dim); stroke-width: 1.6px; vector-effect: non-scaling-stroke; }
 .map .node.here circle { stroke: var(--accent); fill: var(--accent); fill-opacity: .35; }
 .map .node.shelter circle { stroke: var(--info); stroke-width: 1.6; }
 .map .node.hostile circle { stroke: var(--danger); }
 .map .node.sel circle { stroke: var(--accent); stroke-width: 2; }
-.map .node text { font-size: 2.1px; fill: var(--ink); paint-order: stroke; stroke: var(--bg-2); stroke-width: .7; font-family: var(--font); }
-.map .node .dist { font-size: 1.7px; fill: var(--ink-dim); }
+.map .node.unknown circle { stroke-dasharray: 3 2; }
+.map .node text { font-size: calc(12.5px / var(--ppu, 7)); fill: var(--ink); paint-order: stroke; stroke: var(--bg-2); stroke-width: calc(3px / var(--ppu, 7)); font-family: var(--font); pointer-events: none; }
+.map .node .dist { font-size: calc(10.5px / var(--ppu, 7)); fill: var(--ink-dim); }
+.map svg.dense .node .dist { display: none; }
+.map .node.sel text { fill: var(--accent); }
 .map .node .danger { font-size: 2.6px; fill: var(--warn); }
 
 /* meters */
@@ -342,7 +355,9 @@ body.reduce-motion .body-fig .region.infected { animation: none; }
   .dock button { justify-content: center; padding: 8px 4px; }
   .split { grid-template-columns: 1fr; }
   .two-col { grid-template-columns: 1fr; }
-  .body-wrap { grid-template-columns: 120px 1fr; }
+  .body-wrap { grid-template-columns: 96px 1fr; }
+  .vitals.two { grid-template-columns: 1fr; }
+  .win-max { display: none; }
   .win { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; min-width: 0; border-radius: 0; }
   .win:not(.focused) { display: none; }
   .win-resize { display: none; }
@@ -350,7 +365,7 @@ body.reduce-motion .body-fig .region.infected { animation: none; }
   .statusbar { display: none; }
   #screen-desktop { grid-template-rows: auto 1fr auto; grid-template-areas: "top top" "dock main" "cmd cmd"; }
   .topbar { gap: 8px; }
-  .topbar #topSurvivor { display: none; }
+  .topbar #topSurvivor, .topbar #topRegion { display: none; }
 }
 @media (max-width: 600px) {
   .cmdbar .prompt { display: none; }
@@ -368,8 +383,6 @@ body.reduce-motion .body-fig .region.infected { animation: none; }
 <a class="skip" href="#cmdInput">Skip to command bar</a>
 <div id="scanlines" aria-hidden="true"></div>
 <div id="noise" aria-hidden="true"></div>
-<div id="bannerTop" class="easbar lvl-1" role="banner">CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS</div>
-<div id="bannerBottom" class="easbar lvl-1" aria-hidden="true">CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS</div>
 
 <!-- BOOT -->
 <section id="screen-boot" class="screen" aria-label="Boot sequence">
@@ -501,6 +514,8 @@ body.reduce-motion .body-fig .region.infected { animation: none; }
 <section id="screen-desktop" class="screen hidden" aria-label="Operations desktop">
   <header class="topbar">
     <span class="sys">EOC · TERMINAL</span>
+    <span id="topAlert" class="alert-chip lvl-1" role="status">ROUTINE</span>
+    <span id="topRegion" class="mono region"></span>
     <span id="topDay" class="mono clock" aria-live="off"></span>
     <span id="topWeather" class="mono"></span>
     <span id="topDeadline" class="mono deadline"></span>
@@ -667,28 +682,36 @@ return { Typewriter };
 __m["js/ui/windows.js"] = (() => {
 const { h, clear, $ } = __m["js/ui/dom.js"];
 // A small window manager for the desktop: open, close, focus, drag, resize,
-// and a dock of buttons. Each window has a render(body) function that fully
-// redraws its content from state.
+// maximize, remembered geometry, a dock of buttons, and tiling. Each window
+// has a render(body) function that fully redraws its content from state.
 
 
 class WindowManager {
-  constructor(area, dock) {
+  constructor(area, dock, { geometry = {}, onGeometry = null } = {}) {
     this.area = area;
     this.dock = dock;
     this.defs = new Map();
-    this.open = new Map();   // id -> { el, body }
+    this.open = new Map();   // id -> { el, body, def, restore }
     this.z = 10;
     this.cascade = 0;
-    this.badges = new Map();
+    this.geometry = geometry;      // id -> { x, y, w, h } remembered across sessions
+    this.onGeometry = onGeometry;
   }
 
   register(def) { this.defs.set(def.id, def); }
 
-  buildDock(order) {
+  /** order: panel ids, '---' separators, or action ids present in `actions`. */
+  buildDock(order, actions = {}) {
     clear(this.dock);
     for (const id of order) {
       if (id === '---') { this.dock.append(h('div', { class: 'sep' })); continue; }
+      if (actions[id]) {
+        this.dock.append(h('button', { type: 'button', class: 'action', title: actions[id].title, 'aria-label': actions[id].title, onClick: actions[id].run },
+          h('span', { class: 'ico', 'aria-hidden': 'true' }, actions[id].icon), h('span', { class: 'lbl' }, actions[id].title)));
+        continue;
+      }
       const def = this.defs.get(id);
+      if (!def) continue;
       const btn = h('button', { type: 'button', dataset: { win: id }, title: def.title, 'aria-label': def.title, onClick: () => this.toggle(id) },
         h('span', { class: 'ico', 'aria-hidden': 'true' }, def.icon), h('span', { class: 'lbl' }, def.title), h('span', { class: 'badge hidden' }));
       this.dock.append(btn);
@@ -716,23 +739,25 @@ class WindowManager {
     if (this.open.has(id)) { this.focus(id); if (opts.refresh !== false) this.refresh(id); return this.open.get(id); }
     const body = h('div', { class: 'win-body', tabindex: '0' });
     const el = h('section', { class: 'win', role: 'dialog', 'aria-label': def.title, dataset: { win: id } },
-      h('header', { class: 'win-head' },
+      h('header', { class: 'win-head', onDblclick: e => { if (e.target.tagName !== 'BUTTON') this.toggleMax(id); } },
         h('span', { class: 'ico', 'aria-hidden': 'true' }, def.icon),
         h('span', { class: 'win-title' }, def.title, def.sub ? h('span', { class: 'win-sub' }, def.sub) : null),
-        h('button', { type: 'button', title: 'Close', 'aria-label': `Close ${def.title}`, onClick: () => this.close(id) }, '✕')),
+        h('button', { type: 'button', class: 'win-max', title: 'Maximize / restore', 'aria-label': `Maximize ${def.title}`, onClick: () => this.toggleMax(id) }, '▢'),
+        h('button', { type: 'button', class: 'win-close', title: 'Close', 'aria-label': `Close ${def.title}`, onClick: () => this.close(id) }, '✕')),
       body,
       h('div', { class: 'win-resize', 'aria-hidden': 'true' }));
-    const size = def.size || { w: 560, h: 420 };
     const areaW = this.area.clientWidth, areaH = this.area.clientHeight;
-    const w = Math.min(size.w, areaW - 10), hgt = Math.min(size.h, areaH - 10);
-    const off = (this.cascade++ % 8) * 26;
+    const size = def.size || { w: 560, h: 420 };
+    const saved = this.geometry[id];
+    const w = Math.min(saved?.w || size.w, areaW - 10), hgt = Math.min(saved?.h || size.h, areaH - 10);
+    const off = saved ? 0 : (this.cascade++ % 8) * 26;
     el.style.width = `${w}px`; el.style.height = `${hgt}px`;
-    el.style.left = `${Math.max(0, Math.min(areaW - w, (def.x ?? 20) + off))}px`;
-    el.style.top = `${Math.max(0, Math.min(areaH - hgt, (def.y ?? 16) + off))}px`;
+    el.style.left = `${Math.max(0, Math.min(areaW - w, (saved?.x ?? def.x ?? 20) + off))}px`;
+    el.style.top = `${Math.max(0, Math.min(areaH - hgt, (saved?.y ?? def.y ?? 16) + off))}px`;
     this.area.append(el);
-    this.open.set(id, { el, body, def });
-    this.makeDraggable(el, el.querySelector('.win-head'));
-    this.makeResizable(el, el.querySelector('.win-resize'));
+    this.open.set(id, { el, body, def, restore: null });
+    this.makeDraggable(id, el, el.querySelector('.win-head'));
+    this.makeResizable(id, el, el.querySelector('.win-resize'));
     el.addEventListener('pointerdown', () => this.focus(id), true);
     el.addEventListener('keydown', e => { if (e.key === 'Escape') { this.close(id); } });
     this.focus(id);
@@ -746,6 +771,7 @@ class WindowManager {
     if (!w) return;
     const scroll = w.body.scrollTop;
     clear(w.body);
+    w.body.className = 'win-body';
     try { w.def.render(w.body, w); } catch (err) { w.body.append(h('p', { class: 'danger' }, `Render error: ${err.message}`)); console.error(err); }
     w.body.scrollTop = scroll;
   }
@@ -778,10 +804,52 @@ class WindowManager {
 
   isNarrow() { return window.matchMedia('(max-width: 900px)').matches; }
 
-  makeDraggable(el, handle) {
+  toggleMax(id) {
+    const w = this.open.get(id);
+    if (!w || this.isNarrow()) return;
+    if (w.el.classList.contains('max')) {
+      w.el.classList.remove('max');
+      if (w.restore) Object.assign(w.el.style, w.restore);
+      w.restore = null;
+    } else {
+      w.restore = { left: w.el.style.left, top: w.el.style.top, width: w.el.style.width, height: w.el.style.height };
+      w.el.classList.add('max');
+    }
+    this.focus(id);
+    this.refresh(id);
+  }
+
+  /** Arrange every open window in a grid that fills the area. */
+  tile() {
+    if (this.isNarrow()) return;
+    const ids = [...this.open.keys()];
+    if (!ids.length) return;
+    const cols = Math.ceil(Math.sqrt(ids.length)), rows = Math.ceil(ids.length / cols);
+    const W = this.area.clientWidth / cols, H = this.area.clientHeight / rows;
+    ids.forEach((id, i) => {
+      const w = this.open.get(id);
+      w.el.classList.remove('max'); w.restore = null;
+      const c = i % cols, r = Math.floor(i / cols);
+      Object.assign(w.el.style, { left: `${Math.round(c * W)}px`, top: `${Math.round(r * H)}px`, width: `${Math.round(W) - 4}px`, height: `${Math.round(H) - 4}px` });
+      this.remember(id);
+      this.refresh(id);
+    });
+  }
+
+  remember(id) {
+    const w = this.open.get(id);
+    if (!w || w.el.classList.contains('max')) return;
+    const g = { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight };
+    this.geometry[id] = g;
+    this.onGeometry?.(id, g);
+  }
+
+  forgetGeometry() { this.geometry = {}; }
+
+  makeDraggable(id, el, handle) {
     let sx, sy, ox, oy, dragging = false;
     handle.addEventListener('pointerdown', e => {
-      if (e.target.tagName === 'BUTTON' || this.isNarrow()) return;
+      if (e.target.tagName === 'BUTTON' || this.isNarrow() || el.classList.contains('max')) return;
       dragging = true; sx = e.clientX; sy = e.clientY; ox = el.offsetLeft; oy = el.offsetTop;
       handle.setPointerCapture(e.pointerId);
     });
@@ -791,13 +859,15 @@ class WindowManager {
       const ny = Math.max(0, Math.min(this.area.clientHeight - 30, oy + e.clientY - sy));
       el.style.left = `${nx}px`; el.style.top = `${ny}px`;
     });
-    handle.addEventListener('pointerup', () => { dragging = false; });
-    handle.addEventListener('pointercancel', () => { dragging = false; });
+    const end = () => { if (dragging) { dragging = false; this.remember(id); } };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
   }
 
-  makeResizable(el, grip) {
+  makeResizable(id, el, grip) {
     let sx, sy, ow, oh, resizing = false;
     grip.addEventListener('pointerdown', e => {
+      if (el.classList.contains('max')) return;
       resizing = true; sx = e.clientX; sy = e.clientY; ow = el.offsetWidth; oh = el.offsetHeight;
       grip.setPointerCapture(e.pointerId); e.preventDefault();
     });
@@ -806,7 +876,9 @@ class WindowManager {
       el.style.width = `${Math.max(300, ow + e.clientX - sx)}px`;
       el.style.height = `${Math.max(180, oh + e.clientY - sy)}px`;
     });
-    grip.addEventListener('pointerup', () => { resizing = false; });
+    const end = () => { if (resizing) { resizing = false; this.remember(id); this.refresh(id); } };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
   }
 }
 
@@ -1234,34 +1306,37 @@ return { REGIONS, REGION_LABEL, INJURY_TYPES, normalizeRegion, normalizeInjuryTy
 // ---- js/ui/bodyFigure.js ----
 __m["js/ui/bodyFigure.js"] = (() => {
 const { REGIONS, REGION_LABEL, regionStatus } = __m["js/engine/body.js"];
-// The survivor's body as an SVG silhouette. Regions are tinted by the worst
-// injury they carry, pulse when infected, and are dashed when treated.
+// The survivor's body as a clean anatomical silhouette, front view, in the
+// style of a medical body chart. Regions are tinted by the worst injury they
+// carry, pulse when infected, and are dashed when treated.
 
 
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs = {}) { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; }
+const mirror = d => d.replace(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g, (m, x, y) => `${(100 - parseFloat(x)).toFixed(1)},${y}`);
 
-// Front view. The survivor's LEFT side is drawn on the viewer's right.
+// Viewer's left is the survivor's RIGHT. Shapes are drawn for the survivor's right side and mirrored.
+const RIGHT_ARM = 'M31,46.5 C24.5,48 19.5,53 17.5,60 L12.5,99 L21.5,100.5 L25.5,70 C26.5,63 28.5,57 31.5,55 Z';
+const RIGHT_LEG = 'M31.5,111 L50,113 L49,152 C48,166 47,183 46.5,199 L36,199 C35,183 33,166 32,152 Z';
+const RIGHT_FOOT = 'M35.5,199 L47,199 L48.5,205.5 L45,210.5 L29.5,210.5 L30.5,205 Z';
 const SHAPES = {
-  head: () => el('ellipse', { cx: 50, cy: 22, rx: 13, ry: 16 }),
-  neck: () => el('rect', { x: 44, y: 37, width: 12, height: 11, rx: 2 }),
-  torso: () => el('polygon', { points: '30,48 70,48 72,96 28,96' }),
-  abdomen: () => el('polygon', { points: '28,96 72,96 69,126 31,126' }),
-  rightArm: () => el('polygon', { points: '13,53 29,49 29,101 16,104' }),
-  leftArm: () => el('polygon', { points: '71,49 87,53 84,104 71,101' }),
-  rightHand: () => el('ellipse', { cx: 15, cy: 114, rx: 7, ry: 9 }),
-  leftHand: () => el('ellipse', { cx: 85, cy: 114, rx: 7, ry: 9 }),
-  rightLeg: () => el('polygon', { points: '31,126 50,126 48,196 32,196' }),
-  leftLeg: () => el('polygon', { points: '50,126 69,126 68,196 52,196' }),
-  rightFoot: () => el('polygon', { points: '32,196 48,196 50,209 26,209' }),
-  leftFoot: () => el('polygon', { points: '52,196 68,196 74,209 50,209' })
+  head: () => el('path', { d: 'M50,5.5 C57.5,5.5 62.5,12 62.5,21 C62.5,30.5 57,36.5 50,36.5 C43,36.5 37.5,30.5 37.5,21 C37.5,12 42.5,5.5 50,5.5 Z' }),
+  neck: () => el('path', { d: 'M45.5,35 L54.5,35 L56,44 L44,44 Z' }),
+  torso: () => el('path', { d: 'M32,46 C39,42.5 61,42.5 68,46 L71.5,52 C72.5,62 71.5,72 70,82 L30,82 C28.5,72 27.5,62 28.5,52 Z' }),
+  abdomen: () => el('path', { d: 'M30,82 L70,82 C70,91 69,101 66.5,109.5 C58.5,113.5 41.5,113.5 33.5,109.5 C31,101 30,91 30,82 Z' }),
+  rightArm: () => el('path', { d: RIGHT_ARM }),
+  leftArm: () => el('path', { d: mirror(RIGHT_ARM) }),
+  rightHand: () => el('path', { d: 'M12,101 L22,102.5 L21.5,113 C21,118 13,118 12.5,113 Z' }),
+  leftHand: () => el('path', { d: mirror('M12,101 L22,102.5 L21.5,113 C21,118 13,118 12.5,113 Z') }),
+  rightLeg: () => el('path', { d: RIGHT_LEG }),
+  leftLeg: () => el('path', { d: mirror(RIGHT_LEG) }),
+  rightFoot: () => el('path', { d: RIGHT_FOOT }),
+  leftFoot: () => el('path', { d: mirror(RIGHT_FOOT) })
 };
 
 function renderBody(state, { selected = null, onSelect } = {}) {
   const svg = el('svg', { viewBox: '0 0 100 215', role: 'img', 'aria-label': 'Body diagram' });
   const status = regionStatus(state);
-  // outline silhouette behind the regions
-  svg.append(el('path', { class: 'outline', d: 'M50,6 c-8,0 -13,7 -13,16 c0,7 3,12 7,14 l0,10 l-15,3 l-16,4 l3,51 l12,-3 l0,27 l3,-2 l0,70 l-6,13 l24,0 l-2,-13 l0,-70 l0,70 l-2,13 l24,0 l-6,-13 l0,-70 l3,2 l0,-27 l12,3 l3,-51 l-16,-4 l-15,-3 l0,-10 c4,-2 7,-7 7,-14 c0,-9 -5,-16 -13,-16 z' }));
   for (const r of REGIONS) {
     const shape = SHAPES[r]();
     shape.classList.add('region');
@@ -1279,6 +1354,8 @@ function renderBody(state, { selected = null, onSelect } = {}) {
     shape.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(r); } });
     svg.append(shape);
   }
+  // Faint anatomical contours: clavicles and the midline.
+  for (const d of ['M37,47.5 Q50,52.5 63,47.5', 'M50,53 L50,110', 'M43,82 Q50,85 57,82']) svg.append(el('path', { class: 'contour', d }));
   return svg;
 }
 
@@ -2541,13 +2618,13 @@ return { SKILLS, DOOM_LABEL, newGameState, addLog, addFact, addFlag, hasFlag, qu
 // ---- js/ui/panels/status.js ----
 __m["js/ui/panels/status.js"] = (() => {
 const { h, append } = __m["js/ui/dom.js"];
-const { tag, vitalBar, kv, timeOf, btn } = __m["js/ui/panels/common.js"];
+const { tag, vitalBar, timeOf, btn } = __m["js/ui/panels/common.js"];
 const { renderBody } = __m["js/ui/bodyFigure.js"];
 const { REGION_LABEL, treatmentTagsFor, conditions } = __m["js/engine/body.js"];
 const { formatTime, phaseOf, daysLeft } = __m["js/engine/clock.js"];
 const { DOOM_LABEL } = __m["js/engine/state.js"];
 const { getLocation } = __m["js/engine/world.js"];
-// Status: vitals, conditions, the body figure, injuries and treatment, the clock and pending tasks.
+// Status: vitals, conditions, the body figure, injuries and treatment, the clock and pending tasks. Compact by design.
 
 
 
@@ -2558,55 +2635,45 @@ const { getLocation } = __m["js/engine/world.js"];
 
 function registerStatus(app, { S, reg, readOnly }) {
   reg({
-    id: 'status', sub: 'VITALS & BODY', title: 'Status', icon: '♥', size: { w: 620, h: 560 }, x: 700, y: 12,
+    id: 'status', sub: 'VITALS & BODY', title: 'Status', icon: '♥', size: { w: 560, h: 580 }, x: 700, y: 12,
     render(body) {
       const s = S(); const v = s.vitals; const t = s.truth;
       const loc = getLocation(s, s.location);
+      const left = daysLeft(s);
       append(body,
-        h('div', { class: 'card-head' }, h('span', { class: `banner ${s.doom >= 4 ? 'bad' : s.doom >= 3 ? 'warn' : ''}` }, `DOOM ${s.doom}/5 · ${DOOM_LABEL[s.doom]}`), h('span', { class: 'muted small' }, `${formatTime(s.clock.minutes)} · ${phaseOf(s.clock.minutes)} · ${s.weather.today?.label || ''}`)),
-        kv([
-          ['Where', `${loc?.name || '?'}${s.shelter?.locationId === s.location ? ' (your shelter)' : ''}`],
-          ['Mode', s.mode === 'base' ? `Base at ${getLocation(s, s.shelter.locationId)?.name}` : 'Nomad (no fixed shelter)'],
-          ['Deadline', `Day ${s.clock.deadlineDay} · ${daysLeft(s)} day${daysLeft(s) === 1 ? '' : 's'} left`],
-          ['Threat', `${s.threat.level}/5${(s.threat.local[s.location] || 0) > 0 ? ` (+${s.threat.local[s.location]} here)` : ''}`]
-        ]),
-        h('div', { class: 'vitals' },
-          vitalBar('Health', v.health), vitalBar('Hunger', v.hunger), vitalBar('Thirst', v.thirst), vitalBar('Fatigue', v.fatigue),
-          vitalBar('Warmth', v.warmth), vitalBar('Morale', v.morale), vitalBar(t.apocalypse?.hazardName || 'Hazard', v.hazard, { inverse: true })),
-        h('p', { class: 'muted small', style: 'margin:0 0 6px' }, `${t.apocalypse?.hazardName || 'Hazard'}: ${t.apocalypse?.hazardDescription || 'apocalypse-specific exposure'}`),
+        h('div', { class: 'card-head', style: 'margin-bottom:4px' }, h('span', { class: `banner ${s.doom >= 4 ? 'bad' : s.doom >= 3 ? 'warn' : ''}` }, `DOOM ${s.doom}/5 · ${DOOM_LABEL[s.doom]}`), h('span', { class: 'muted small' }, `${formatTime(s.clock.minutes)} · ${phaseOf(s.clock.minutes)} · ${s.weather.today?.label || ''}`)),
+        h('p', { class: 'small muted', style: 'margin:0 0 6px' }, `${loc?.name || '?'}${s.shelter?.locationId === s.location ? ' (your shelter)' : ''} · ${s.mode === 'base' ? `base at ${getLocation(s, s.shelter.locationId)?.name}` : 'nomad'} · deadline day ${s.clock.deadlineDay}, ${left} day${left === 1 ? '' : 's'} left · threat ${s.threat.level}/5${(s.threat.local[s.location] || 0) > 0 ? ` (+${s.threat.local[s.location]} here)` : ''}`),
+        h('div', { class: 'vitals two' },
+          vitalBar('Health', v.health), vitalBar('Morale', v.morale), vitalBar('Hunger', v.hunger), vitalBar('Thirst', v.thirst),
+          vitalBar('Fatigue', v.fatigue), vitalBar('Warmth', v.warmth), vitalBar(t.apocalypse?.hazardName || 'Hazard', v.hazard, { inverse: true })),
         h('div', { class: 'conds' }, conditions(s).length ? conditions(s).map(c => tag(c, /critical|starv|dehyd|hypo|collaps|infect|despair/.test(c) ? 'bad' : 'warn')) : tag('no acute conditions', 'ok'))
       );
-      // body + injuries
       const injuries = s.body.injuries;
       const selectedRegion = app.selected.region;
       const figure = h('div', { class: 'body-fig' }, renderBody(s, { selected: selectedRegion, onSelect: r => { app.selected.region = app.selected.region === r ? null : r; app.wm.refresh('status'); } }));
-      const right = h('div', {});
-      append(right, h('h3', {}, `Injuries (${injuries.length})`));
+      const right = h('div', { class: 'injuries' });
       const shown = selectedRegion ? injuries.filter(i => i.region === selectedRegion) : injuries;
-      if (selectedRegion) append(right, h('p', { class: 'muted small' }, `${REGION_LABEL[selectedRegion]} selected. `, h('a', { href: '#', onClick: e => { e.preventDefault(); app.selected.region = null; app.wm.refresh('status'); } }, 'show all')));
-      if (!shown.length) append(right, h('p', { class: 'muted small' }, selectedRegion ? 'Nothing wrong there.' : 'No injuries.'));
+      append(right, h('h3', { style: 'margin-top:0' }, `Injuries (${injuries.length})`, selectedRegion ? h('span', { class: 'muted' }, ` · ${REGION_LABEL[selectedRegion]} `, h('a', { href: '#', onClick: e => { e.preventDefault(); app.selected.region = null; app.wm.refresh('status'); } }, 'all')) : null));
+      if (!shown.length) append(right, h('p', { class: 'muted small' }, selectedRegion ? 'Nothing wrong there.' : 'No injuries. Click a body part to inspect it.'));
       for (const inj of shown) {
         const tags = treatmentTagsFor(inj);
         const meds = s.inventory.items.filter(it => it.category === 'medical' && it.tags.some(tg => tags.includes(tg)) && (inj.infected ? it.tags.includes('antibiotic') : !it.tags.includes('antibiotic') || tags.length === 1));
         const sel = h('select', { 'aria-label': 'Treatment' }, meds.map(m => h('option', { value: m.id }, `${m.name}${m.qty > 1 ? ` ×${m.qty}` : ''}`)));
-        append(right, h('div', { class: 'entry notice', style: 'color:inherit' },
-          h('div', { class: 'who' }, `${REGION_LABEL[inj.region]} · ${inj.type} · severity ${inj.severity}`, inj.infected ? tag('infected', 'bad') : null, inj.treated ? tag('treated', 'ok') : tag('untreated', 'warn')),
-          h('div', { class: 'small muted' }, `Healing ${Math.round(inj.progress)}% · since ${timeOf(inj.at)}${inj.infected ? ' · needs antibiotics' : inj.treated ? '' : ` · needs ${tags.filter(x => x !== 'antibiotic').join(' or ')}`}`),
+        append(right, h('div', { class: 'injury' },
+          h('div', { class: 'who' }, `${REGION_LABEL[inj.region]} · ${inj.type} · sev ${inj.severity}`, inj.infected ? tag('infected', 'bad') : null, inj.treated ? tag('treated', 'ok') : tag('untreated', 'warn')),
+          h('div', { class: 'small muted' }, `healing ${Math.round(inj.progress)}% · since ${timeOf(inj.at)}${inj.infected ? ' · needs antibiotics' : inj.treated ? '' : ` · needs ${tags.filter(x => x !== 'antibiotic').join(' or ')}`}`),
           readOnly() || (!inj.infected && inj.treated) ? null : h('div', { class: 'row tight' }, meds.length ? [sel, btn('Treat', () => app.treat(inj.id, sel.value))] : h('span', { class: 'warn small' }, 'No suitable treatment in your pack.'))));
       }
       if (s.body.illness) {
         const ill = s.body.illness;
         const anti = s.inventory.items.find(it => it.tags.includes('antibiotic'));
-        append(right, h('h3', {}, 'Illness'), h('div', { class: 'entry notice', style: 'color:inherit' }, h('div', { class: 'who' }, `${ill.name} · severity ${ill.severity}`, ill.treated ? tag('treated', 'ok') : tag('untreated', 'bad')),
+        append(right, h('div', { class: 'injury' }, h('div', { class: 'who' }, `Illness · ${ill.name} · sev ${ill.severity}`, ill.treated ? tag('treated', 'ok') : tag('untreated', 'bad')),
           readOnly() || ill.treated ? null : h('div', { class: 'row tight' }, anti ? btn(`Take ${anti.name}`, () => app.useItem(anti.id)) : h('span', { class: 'warn small' }, 'Antibiotics would help. Rest, clean water and food help a little.'))));
       }
-      append(right, h('div', { class: 'legend' }, h('span', {}, h('i', { class: 's1' }), 'minor'), h('span', {}, h('i', { class: 's2' }), 'serious'), h('span', {}, h('i', { class: 's3' }), 'critical'), h('span', {}, 'dashed = treated, pulsing = infected')));
+      append(right, h('div', { class: 'legend' }, h('span', {}, h('i', { class: 's1' }), 'minor'), h('span', {}, h('i', { class: 's2' }), 'serious'), h('span', {}, h('i', { class: 's3' }), 'critical'), h('span', {}, 'dashed = treated · pulsing = infected')));
       append(body, h('div', { class: 'body-wrap' }, figure, right));
-      // pending
-      append(body, h('h3', {}, `Pending (${s.pending.length})`));
-      if (!s.pending.length) append(body, h('p', { class: 'muted small' }, 'Nothing resolving later. Companion tasks and long jobs appear here.'));
-      else append(body, h('ul', { class: 'small' }, s.pending.map(p => h('li', {}, `${p.label} · ready ${formatTime(p.readyAt)}`))));
-      if (!readOnly()) append(body, h('div', { class: 'row' }, btn('Take stock', () => app.takeStock())));
+      append(body, h('p', { class: 'small muted', style: 'margin:6px 0 0' }, h('b', {}, `Pending (${s.pending.length}): `), s.pending.length ? s.pending.map(p => `${p.label} · ready ${formatTime(p.readyAt)}`).join(' | ') : 'nothing resolving later.'),
+        readOnly() ? null : h('div', { class: 'row tight' }, btn('Take stock', () => app.takeStock())));
     }
   });
 }
@@ -2948,11 +3015,17 @@ return { distance, travelPlan, rollTravel, makeEncounter, playerPower, classifyA
 
 // ---- js/ui/mapView.js ----
 __m["js/ui/mapView.js"] = (() => {
-const { getLocation, locState, effectiveDanger } = __m["js/engine/world.js"];
+const { h } = __m["js/ui/dom.js"];
+const { getLocation, effectiveDanger } = __m["js/engine/world.js"];
 const { distance } = __m["js/engine/encounters.js"];
 const { holderOf } = __m["js/engine/factions.js"];
+const { clamp } = __m["js/engine/util.js"];
 // The region map: known locations plotted by their truth coordinates, with
-// dashed routes from where the survivor stands.
+// dashed routes from where the survivor stands. Zoom with the wheel, pinch
+// or the buttons; pan by dragging or with the arrow keys. Labels and markers
+// keep a constant size on screen whatever the zoom, like a real map.
+
+
 
 
 
@@ -2960,46 +3033,140 @@ const { holderOf } = __m["js/engine/factions.js"];
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs = {}, text) { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text != null) e.textContent = text; return e; }
 
-function renderMap(state, { selected = null, onSelect } = {}) {
-  const svg = el('svg', { viewBox: '-4 -4 108 112', role: 'img', 'aria-label': 'Region map' });
+const MIN_W = 10, MAX_W = 220;
+
+/** A view that shows every known location with some air around it. */
+function fitView(state, aspect = 1.6) {
+  const locs = state.discovered.locations.map(id => getLocation(state, id)).filter(Boolean);
+  const xs = locs.map(l => l.x), ys = locs.map(l => l.y);
+  const minX = locs.length ? Math.min(...xs) : 0, maxX = locs.length ? Math.max(...xs) : 100;
+  const minY = locs.length ? Math.min(...ys) : 0, maxY = locs.length ? Math.max(...ys) : 100;
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const w = clamp(Math.max((maxX - minX) * 1.3 + 14, ((maxY - minY) * 1.3 + 16) * aspect), 36, MAX_W);
+  return { x: cx - w / 2, y: cy - (w / aspect) / 2, w, h: w / aspect, fitted: true };
+}
+
+function renderMap(state, { selected = null, onSelect, view = null, onView } = {}) {
+  const v = view || fitView(state);
+  const svg = el('svg', { role: 'img', 'aria-label': 'Region map. Scroll to zoom, drag to pan, arrow keys to move.', tabindex: '0' });
+  let aspect = 1.6;
+  const nodes = [];
+  const apply = () => {
+    const r = svg.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) aspect = r.width / r.height;
+    v.h = v.w / aspect;
+    svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    const ppu = (r.width || 800) / v.w;          // screen pixels per map unit
+    svg.style.setProperty('--ppu', String(ppu));
+    svg.classList.toggle('dense', ppu < 5);
+    for (const n of nodes) n.circle.setAttribute('r', String(n.big ? 6 / ppu : 4.5 / ppu));
+    for (const n of nodes) { n.label.setAttribute('y', String(n.loc.y + 14 / ppu)); n.dist?.setAttribute('y', String(n.loc.y + 25 / ppu)); }
+    onView?.(v);
+  };
+
   const grid = el('g', { class: 'grid' });
-  for (let i = 0; i <= 100; i += 10) { grid.append(el('line', { x1: i, y1: 0, x2: i, y2: 100 })); grid.append(el('line', { x1: 0, y1: i, x2: 100, y2: i })); }
+  for (let i = -40; i <= 140; i += 10) { grid.append(el('line', { x1: i, y1: -40, x2: i, y2: 140 })); grid.append(el('line', { x1: -40, y1: i, x2: 140, y2: i })); }
   svg.append(grid);
   const here = getLocation(state, state.location);
   const known = state.discovered.locations.map(id => getLocation(state, id)).filter(Boolean);
   for (const loc of known) {
     if (!here || loc.id === here.id) continue;
-    const e = el('line', { class: `edge ${selected === loc.id ? 'sel' : ''}`, x1: here.x, y1: here.y, x2: loc.x, y2: loc.y });
-    svg.append(e);
+    svg.append(el('line', { class: `edge ${selected === loc.id ? 'sel' : ''}`, x1: here.x, y1: here.y, x2: loc.x, y2: loc.y }));
   }
+  let moved = false;
   for (const loc of known) {
     const ls = state.locationState[loc.id];
     const visited = (ls?.visits || 0) > 0 || ls?.scouted;
     const holder = holderOf(state, loc.id);
     const hostile = holder && visited && (state.factions[holder.id]?.standing ?? 0) < 0;
-    const g = el('g', { class: `node ${loc.id === state.location ? 'here' : ''} ${state.shelter?.locationId === loc.id ? 'shelter' : ''} ${hostile ? 'hostile' : ''} ${selected === loc.id ? 'sel' : ''}`, tabindex: '0', role: 'button' });
-    g.append(el('circle', { cx: loc.x, cy: loc.y, r: state.shelter?.locationId === loc.id ? 2.4 : 1.8 }));
-    g.append(el('text', { x: loc.x, y: loc.y + 4.6, 'text-anchor': 'middle' }, loc.name.length > 24 ? loc.name.slice(0, 23) + '…' : loc.name));
-    if (here && loc.id !== here.id) g.append(el('text', { class: 'dist', x: loc.x, y: loc.y + 7.2, 'text-anchor': 'middle' }, `${Math.round(distance(here, loc))} km${visited ? ` · danger ${Math.round(effectiveDanger(state, loc.id))}` : ''}`));
-    else if (visited) g.append(el('text', { class: 'dist', x: loc.x, y: loc.y + 7.2, 'text-anchor': 'middle' }, `you are here · danger ${Math.round(effectiveDanger(state, loc.id))}`));
+    const isShelter = state.shelter?.locationId === loc.id;
+    const g = el('g', { class: `node ${loc.id === state.location ? 'here' : ''} ${isShelter ? 'shelter' : ''} ${hostile ? 'hostile' : ''} ${visited ? '' : 'unknown'} ${selected === loc.id ? 'sel' : ''}`, tabindex: '0', role: 'button' });
+    const circle = el('circle', { cx: loc.x, cy: loc.y, r: 1.5 });
+    const label = el('text', { x: loc.x, y: loc.y + 4, 'text-anchor': 'middle' }, loc.name);
+    let dist = null;
+    if (here && loc.id !== here.id) dist = el('text', { class: 'dist', x: loc.x, y: loc.y + 7, 'text-anchor': 'middle' }, `${Math.round(distance(here, loc))} km${visited ? ` · danger ${Math.round(effectiveDanger(state, loc.id))}` : ' · unvisited'}`);
+    else if (visited) dist = el('text', { class: 'dist', x: loc.x, y: loc.y + 7, 'text-anchor': 'middle' }, `you are here · danger ${Math.round(effectiveDanger(state, loc.id))}`);
+    g.append(circle, label); if (dist) g.append(dist);
     const title = el('title', {}, `${loc.name}${visited ? '' : ' (not yet visited)'}`);
     g.append(title);
     g.setAttribute('aria-label', title.textContent);
-    g.addEventListener('click', () => onSelect?.(loc.id));
-    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(loc.id); } });
+    g.addEventListener('click', () => { if (!moved) onSelect?.(loc.id); });
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSelect?.(loc.id); } });
     svg.append(g);
+    nodes.push({ loc, circle, label, dist, big: isShelter || loc.id === state.location });
   }
-  return svg;
+
+  // ---- zoom and pan
+  const toSvg = (clientX, clientY) => { const r = svg.getBoundingClientRect(); return { x: v.x + (clientX - r.left) / r.width * v.w, y: v.y + (clientY - r.top) / r.height * v.h }; };
+  const zoomAt = (factor, px, py) => {
+    const nw = clamp(v.w * factor, MIN_W, MAX_W); const ratio = nw / v.w;
+    v.x = px - (px - v.x) * ratio; v.y = py - (py - v.y) * ratio; v.w = nw; v.fitted = false; apply();
+  };
+  const zoomCenter = factor => zoomAt(factor, v.x + v.w / 2, v.y + v.h / 2);
+  const fit = () => { Object.assign(v, fitView(state, aspect)); apply(); };
+  const centerOn = loc => { if (!loc) return; v.x = loc.x - v.w / 2; v.y = loc.y - v.h / 2; v.fitted = false; apply(); };
+  svg.addEventListener('wheel', e => { e.preventDefault(); const p = toSvg(e.clientX, e.clientY); zoomAt(e.deltaY > 0 ? 1.2 : 1 / 1.2, p.x, p.y); }, { passive: false });
+  const pointers = new Map(); let drag = null; let pinch = null;
+  svg.addEventListener('pointerdown', e => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    svg.setPointerCapture(e.pointerId);
+    if (pointers.size === 1) { drag = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }; moved = false; }
+    else if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), w: v.w, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 }; drag = null; }
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const r = svg.getBoundingClientRect();
+    if (pinch && pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      const target = clamp(pinch.w * (pinch.d / d), MIN_W, MAX_W);
+      const c = toSvg(pinch.cx, pinch.cy);
+      zoomAt(target / v.w, c.x, c.y); moved = true; return;
+    }
+    if (drag) {
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) moved = true;
+      v.x = drag.vx - (e.clientX - drag.x) / r.width * v.w;
+      v.y = drag.vy - (e.clientY - drag.y) / r.height * v.h;
+      v.fitted = false; apply();
+    }
+  });
+  const up = e => { pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; if (pointers.size === 0) drag = null; };
+  svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
+  svg.addEventListener('keydown', e => {
+    const step = v.w * 0.1; const k = e.key;
+    if (k === 'ArrowLeft') { v.x -= step; } else if (k === 'ArrowRight') { v.x += step; }
+    else if (k === 'ArrowUp') { v.y -= step; } else if (k === 'ArrowDown') { v.y += step; }
+    else if (k === '+' || k === '=') { zoomCenter(1 / 1.25); return e.preventDefault(); } else if (k === '-' || k === '_') { zoomCenter(1.25); return e.preventDefault(); }
+    else if (k === '0') { fit(); return e.preventDefault(); } else return;
+    v.fitted = false; apply(); e.preventDefault();
+  });
+  // Re-fit the view to the box whenever the box changes size (first attach, window resize, maximize).
+  let lastW = 0, lastH = 0;
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => {
+    const r = svg.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1 || (Math.abs(r.width - lastW) < 1 && Math.abs(r.height - lastH) < 1)) return;
+    lastW = r.width; lastH = r.height;
+    if (v.fitted) Object.assign(v, fitView(state, r.width / r.height));
+    apply();
+  }).observe(svg);
+
+  const btn = (label, title, fn) => h('button', { class: 'btn small ghost', type: 'button', title, 'aria-label': title, onClick: fn }, label);
+  const bar = h('div', { class: 'map-tools' },
+    btn('+', 'Zoom in', () => zoomCenter(1 / 1.4)), btn('−', 'Zoom out', () => zoomCenter(1.4)), btn('Fit', 'Show every known place', fit), btn('Here', 'Centre on where you are', () => centerOn(here)),
+    h('span', { class: 'muted small' }, 'scroll to zoom · drag to pan · arrows move · click a place'));
+  apply();
+  return h('div', { class: 'map' }, bar, svg);
 }
 
-return { renderMap };
+return { fitView, renderMap };
 })();
 
 // ---- js/ui/panels/map.js ----
 __m["js/ui/panels/map.js"] = (() => {
 const { h, append } = __m["js/ui/dom.js"];
 const { tag, kv, pickList, btn } = __m["js/ui/panels/common.js"];
-const { renderMap } = __m["js/ui/mapView.js"];
+const { renderMap, fitView } = __m["js/ui/mapView.js"];
 const { getLocation, locState, effectiveDanger } = __m["js/engine/world.js"];
 const { travelPlan } = __m["js/engine/encounters.js"];
 const { holderOf, standingLabel } = __m["js/engine/factions.js"];
@@ -3017,13 +3184,15 @@ const RES_LABEL = { food: 'food', water: 'water', medical: 'medical', fuel: 'fue
 
 function registerMap(app, { S, reg, readOnly }) {
   reg({
-    id: 'map', sub: 'REGION', title: 'Map', icon: '⌖', size: { w: 820, h: 600 }, x: 120, y: 30,
+    id: 'map', sub: 'REGION', title: 'Map', icon: '⌖', size: { w: 860, h: 640 }, x: 120, y: 30,
     render(body) {
       const s = S();
+      body.classList.add('col');
       const ids = s.discovered.locations;
       if (!app.selected.location || !ids.includes(app.selected.location)) app.selected.location = s.location;
       const sel = app.selected.location;
-      const map = h('div', { class: 'map' }, renderMap(s, { selected: sel, onSelect: id => { app.selected.location = id; app.wm.refresh('map'); } }));
+      if (!app.mapView) app.mapView = fitView(s);
+      const map = renderMap(s, { selected: sel, view: app.mapView, onSelect: id => { app.selected.location = id; app.wm.refresh('map'); } });
       const list = pickList(ids.map(id => { const l = getLocation(s, id); const ls = s.locationState[id]; const visited = (ls?.visits || 0) > 0 || ls?.scouted; return { id, title: l.name, meta: `${l.type}${visited ? ` · danger ${Math.round(effectiveDanger(s, id))}/5` : ' · unvisited'}`, tags: [id === s.location ? tag('here', 'ok') : null, s.shelter?.locationId === id ? tag('shelter', 'info') : null, s.caches[id]?.length ? tag('cache', 'info') : null] }; }), { selectedId: sel, onSelect: id => { app.selected.location = id; app.wm.refresh('map'); } });
       const detail = h('div', { class: 'detail' });
       const l = getLocation(s, sel);
@@ -3043,7 +3212,7 @@ function registerMap(app, { S, reg, readOnly }) {
           ]));
         if (visited) append(detail, h('p', { class: 'narr small' }, l.description), l.travelNotes ? h('p', { class: 'muted small' }, l.travelNotes) : null);
         else append(detail, h('p', { class: 'muted' }, 'You have not been here. You know it exists.'));
-        if (ls.searched.length) append(detail, h('p', { class: 'small' }, 'What seems left here: ', Object.entries(ls.resources).map(([k, v]) => tag(`${RES_LABEL[k]} ${'●'.repeat(v)}${'○'.repeat(Math.max(0, 5 - v))}`, v === 0 ? 'bad' : v <= 1 ? 'warn' : ''))));
+        if (ls.searched.length) append(detail, h('p', { class: 'small' }, 'What seems left here: ', Object.entries(ls.resources).map(([k, val]) => tag(`${RES_LABEL[k]} ${'●'.repeat(val)}${'○'.repeat(Math.max(0, 5 - val))}`, val === 0 ? 'bad' : val <= 1 ? 'warn' : ''))));
         if (!readOnly()) {
           const row = h('div', { class: 'chip-row' });
           if (!here) append(row, btn('Travel there', () => app.travel(l.id), 'small primary'));
@@ -3057,12 +3226,12 @@ function registerMap(app, { S, reg, readOnly }) {
           if (here) {
             const area = h('input', { type: 'text', placeholder: 'Where exactly? e.g. "the back office", "under the stairs"', 'aria-label': 'Area to search' });
             area.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); if (area.value.trim()) app.search(area.value.trim()); } });
-            append(detail, h('h3', {}, 'Search'), h('div', { class: 'chip-row' }, (l.searchableAreas || []).map(a => btn(a, () => app.search(a), `small ghost`))), h('div', { class: 'row tight' }, area, btn('Search', () => { if (area.value.trim()) app.search(area.value.trim()); })),
+            append(detail, h('h3', {}, 'Search'), h('div', { class: 'chip-row' }, (l.searchableAreas || []).map(a => btn(a, () => app.search(a), 'small ghost'))), h('div', { class: 'row tight' }, area, btn('Search', () => { if (area.value.trim()) app.search(area.value.trim()); })),
               h('p', { class: 'muted small' }, 'Searching takes about an hour. Places run dry; repeat searches of the same spot find less. Night searches are dangerous.'));
           }
         }
       }
-      append(body, map, h('div', { class: 'split', style: 'height:auto;margin-top:10px' }, list, detail));
+      append(body, map, h('div', { class: 'map-details split' }, list, detail));
     }
   });
 }
@@ -3395,7 +3564,8 @@ function registerSettings(app, { S, reg }) {
         h('label', { class: 'check' }, chk(!!st.reduceMotion, v => { st.reduceMotion = v; }), 'Reduce motion (no scanlines, noise, blinking or typewriter)'),
         h('label', { class: 'check' }, chk(st.scanlines !== false, v => { st.scanlines = v; }), 'Scanlines'),
         h('label', { class: 'check' }, chk(st.noise !== false, v => { st.noise = v; }), 'Background noise texture'),
-        h('label', { class: 'check' }, chk(!!st.highContrast, v => { st.highContrast = v; }), 'High contrast text'));
+        h('label', { class: 'check' }, chk(!!st.highContrast, v => { st.highContrast = v; }), 'High contrast text'),
+        h('div', { class: 'row tight' }, h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.resetLayout() }, 'Reset window layout'), h('span', { class: 'muted small' }, 'Windows remember where you put them. Double-click a title bar or press ▢ to maximize; ⊞ Tile arranges every open window.')));
       append(body, h('h3', {}, 'Save slots'),
         h('ul', { class: 'slot-list' }, store.listSlots().map(sl => h('li', {},
           h('span', { class: 'slot-info' }, h('b', {}, sl.slot === 0 ? 'Autosave' : `Slot ${sl.slot}`), sl.empty ? 'empty' : `${sl.survivor} · ${sl.title} · day ${sl.day}${sl.ended ? ' · ENDED' : ''} · ${new Date(sl.savedAt).toLocaleString()}`),
@@ -3449,7 +3619,7 @@ function registerHelp(app, { reg }) {
           ['fight · run · hide · talk', 'during an encounter'], ['open <panel>', 'open a panel'], ['end my story', 'close the record'], ['<anything else>', 'a free action, narrated by the world']
         ].map(([c, d]) => h('tr', {}, h('td', {}, h('code', {}, c)), h('td', {}, d))))),
         h('h3', {}, 'Keys'),
-        h('p', { class: 'small' }, h('kbd', {}, '/'), ' focus the command bar · ', h('kbd', {}, 'Alt+1..9'), ' open panels · ', h('kbd', {}, 'Esc'), ' close the focused panel · click streaming text to skip the typewriter.'),
+        h('p', { class: 'small' }, h('kbd', {}, '/'), ' focus the command bar · ', h('kbd', {}, '1'), '–', h('kbd', {}, '4'), ' pick a choice · ', h('kbd', {}, 'Alt+1..9'), ' open panels · ', h('kbd', {}, 'Esc'), ' close the focused panel · double-click a title bar to maximize · ', h('kbd', {}, 'tile'), ' arranges windows · on the map: scroll to zoom, drag to pan, arrows to move, ', h('kbd', {}, '0'), ' to fit · click streaming text to skip the typewriter.'),
         h('p', { class: 'small muted' }, 'The Game Master is an AI model using your API key; the key never leaves your browser except to that provider. Autosave runs after every turn; five manual slots and a JSON export live in Settings.'));
     }
   });
@@ -3484,7 +3654,7 @@ const { registerHelp } = __m["js/ui/panels/help.js"];
 
 
 
-const DOCK_ORDER = ['log', 'status', 'inventory', 'companions', 'map', 'shelter', 'radio', 'journal', 'factions', '---', 'settings', 'help'];
+const DOCK_ORDER = ['log', 'status', 'inventory', 'companions', 'map', 'shelter', 'radio', 'journal', 'factions', '---', 'tile', 'settings', 'help'];
 
 function registerPanels(app) {
   const ctx = { S: () => app.state, reg: def => app.wm.register(def), readOnly: () => !!app.state?.ended };
@@ -5096,7 +5266,7 @@ const store = __m["js/engine/storage.js"];
 
 
 const SPEED = { off: 0, fast: 4, normal: 12, slow: 28 };
-const IDLE_BANNER = 'CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS';
+const IDLE_BANNER = 'ROUTINE';
 
 class App {
   constructor() {
@@ -5131,17 +5301,17 @@ class App {
     else if (this.state) this.setWorldBanner();
   }
 
-  /** Full-width Emergency Alert System bars, top and bottom, coloured by alert level. */
+  /** The alert chip in the top bar, coloured by the world's alert level. */
   setBanner(level, text) {
-    for (const id of ['#bannerTop', '#bannerBottom']) { const el = $(id); el.className = `easbar lvl-${level}`; el.textContent = text; }
+    const el = $('#topAlert'); if (!el) return;
+    el.className = `alert-chip lvl-${level}`; el.textContent = text;
   }
   setWorldBanner() {
     const s = this.state; if (!s) return;
-    const region = (s.truth.region?.name || 'REGION').toUpperCase();
     const lvl = Math.max(1, Math.min(5, s.doom || 1));
     const calm = s.phase === 'prologue' && !s.ended;
-    const status = s.ended ? 'RECORD CLOSED' : calm ? 'NO ACTIVE WARNINGS' : DOOM_LABEL[lvl];
-    this.setBanner(calm ? 1 : lvl, `EMERGENCY ALERT SYSTEM · ${region} · ${status} · DAY ${dayOf(s.clock.minutes)}`);
+    this.setBanner(calm ? 1 : lvl, s.ended ? 'RECORD CLOSED' : calm ? 'ROUTINE' : DOOM_LABEL[lvl]);
+    $('#topRegion').textContent = (s.truth.region?.name || '').toUpperCase();
   }
 
   applySettings() {
@@ -5288,14 +5458,21 @@ class App {
 
   // ---------------------------------------------------------------- desktop
   setupDesktop() {
-    this.wm = new WindowManager($('#windowArea'), $('#dock'));
+    this.wm = new WindowManager($('#windowArea'), $('#dock'), {
+      geometry: this.settings.windows || {},
+      onGeometry: (id, g) => { this.settings.windows = this.settings.windows || {}; this.settings.windows[id] = g; store.saveSettings(this.settings); }
+    });
     registerPanels(this);
-    this.wm.buildDock(DOCK_ORDER);
+    this.wm.buildDock(DOCK_ORDER, { tile: { icon: '⊞', title: 'Tile windows', run: () => this.wm.tile() } });
     $('#cmdBar').addEventListener('submit', e => { e.preventDefault(); const v = $('#cmdInput').value.trim(); if (!v) return; $('#cmdInput').value = ''; this.handleCommand(v); });
     document.addEventListener('keydown', e => {
       if (e.target.matches('input, textarea, select') && e.key !== 'Escape') return;
       if (e.key === '/') { e.preventDefault(); $('#cmdInput').focus(); }
-      if (e.altKey && /^[1-9]$/.test(e.key)) { const id = DOCK_ORDER.filter(x => x !== '---')[Number(e.key) - 1]; if (id) { e.preventDefault(); this.wm.show(id); } }
+      if (e.altKey && /^[1-9]$/.test(e.key)) { const id = DOCK_ORDER.filter(x => x !== '---' && x !== 'tile')[Number(e.key) - 1]; if (id) { e.preventDefault(); this.wm.show(id); } }
+      else if (!e.altKey && !e.ctrlKey && !e.metaKey && /^[1-4]$/.test(e.key) && this.state && !this.busy && !this.state.ended) {
+        const c = this.state.lastChoices[Number(e.key) - 1];
+        if (c) { e.preventDefault(); this.choose(c); }
+      }
     });
     window.addEventListener('beforeunload', () => this.autosave());
   }
@@ -5325,7 +5502,17 @@ class App {
     const region = s.truth.region?.name || 'Region';
     $('#wmText').innerHTML = `<div class="wm-name">${esc(s.survivor.name.toUpperCase())}</div><div class="wm-id">${esc(s.survivor.id)}</div><div class="wm-region">${esc(region.toUpperCase())}</div><div class="wm-sub">SURVIVOR LIAISON RECORD</div>`;
     const saved = this.lastSave ? new Date(this.lastSave).toLocaleTimeString() : 'never';
-    $('#statusBar').textContent = `EOC LINK · ${region.toUpperCase()} · SURVIVOR ${s.survivor.name.toUpperCase()} (${s.survivor.id}) · GM ${this.provider.name.toUpperCase()} · TURN ${s.turnCount} · LAST SAVE ${saved}`;
+    const v = s.vitals; const sup = supplyDays(s);
+    const cell = (label, val, inverse = false) => { const lvl = inverse ? (val > 80 ? 'bad' : val > 50 ? 'warn' : '') : (val < 25 ? 'bad' : val < 50 ? 'warn' : ''); return h('span', { class: `v ${lvl}` }, `${label} `, h('b', {}, String(Math.round(val)))); };
+    const bar = clear($('#statusBar'));
+    append(bar, cell('HEALTH', v.health), cell('HUNGER', v.hunger), cell('THIRST', v.thirst), cell('REST', v.fatigue), cell('WARMTH', v.warmth), cell('MORALE', v.morale), cell((s.truth.apocalypse?.hazardName || 'HAZARD').toUpperCase(), v.hazard, true),
+      h('span', { class: 'v' }, `FOOD ${sup.food}d · WATER ${sup.water}d`), h('span', { class: 'v' }, `TURN ${s.turnCount} · SAVED ${saved}`));
+  }
+
+  resetLayout() {
+    this.settings.windows = {}; store.saveSettings(this.settings);
+    this.wm.forgetGeometry(); this.wm.closeAll(); this.wm.cascade = 0;
+    this.wm.show('log'); if (!this.wm.isNarrow()) { this.wm.show('status'); this.wm.focus('log'); }
   }
 
   setStatus(text, busy = false) {
@@ -5602,6 +5789,7 @@ class App {
       case 'stock': case 'status': return this.takeStock();
       case 'inventory': case 'inv': case 'i': return this.wm.show('inventory');
       case 'map': case 'm': return this.wm.show('map');
+      case 'tile': return this.wm.tile();
       case 'hint': return this.hint(arg);
       case 'note': case 'n': { if (!arg) return this.wm.show('journal'); s.journal = (s.journal ? s.journal + '\n' : '') + arg; this.autosave(); this.wm.refresh('journal'); return toast('Note added.'); }
       case 'save': return this.wm.show('settings');

@@ -78,7 +78,7 @@ try {
   await idle();
   let s = await state();
   if (s.turnCount !== 1 || s.phase !== 'prologue') throw new Error(`expected prologue turn 1, got turn ${s.turnCount} phase ${s.phase}`);
-  if (!(await page.textContent('#bannerTop')).includes('CASCADE REACH')) throw new Error('banner should carry the region');
+  if (!(await page.textContent('#topRegion')).includes('CASCADE REACH')) throw new Error('top bar should carry the region');
 
   step('prologue');
   await cmd('Turn on the radio and listen');
@@ -140,6 +140,21 @@ try {
   await page.waitForSelector('.win[data-win="map"] .map svg .node');
   const nodes = await page.$$eval('.win[data-win="map"] .map svg .node', els => els.length);
   if (nodes < 7) throw new Error(`expected at least 7 map nodes, got ${nodes}`);
+  const vb0 = await page.getAttribute('.win[data-win="map"] .map svg', 'viewBox');
+  await page.click('.win[data-win="map"] .map-tools button[title="Zoom in"]');
+  const vb1 = await page.getAttribute('.win[data-win="map"] .map svg', 'viewBox');
+  if (vb0 === vb1) throw new Error('zoom in should change the map viewBox');
+  await page.hover('.win[data-win="map"] .map svg');
+  await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(100);
+  const vb2 = await page.getAttribute('.win[data-win="map"] .map svg', 'viewBox');
+  if (vb1 === vb2) throw new Error('wheel should zoom the map');
+  await page.click('.win[data-win="map"] .win-max');
+  if (!(await page.$('.win[data-win="map"].max'))) throw new Error('maximize should add the max class');
+  await page.click('.win[data-win="map"] .win-max');
+  if (await page.$('.win[data-win="map"].max')) throw new Error('restore should remove the max class');
+  await page.click('.dock button[title="Tile windows"]');
+  await page.waitForTimeout(100);
   await cmd('claim');
   s = await state();
   if (s.shelter?.locationId !== 'loc2') throw new Error('shelter should be the pharmacy');
@@ -199,7 +214,7 @@ try {
   await cmd('go dunmore');
   s = await state();
   if (s.location !== 'loc8') throw new Error(`expected loc8, got ${s.location}`);
-  if (!(await page.textContent('#bannerTop')).match(/CONTINENTAL DARK|REGIONAL EMERGENCY|EXTINCTION/)) throw new Error('banner should reflect a raised alert level by day 19');
+  if (!(await page.textContent('#topAlert')).match(/CONTINENTAL DARK|REGIONAL EMERGENCY|EXTINCTION/)) throw new Error('alert chip should reflect a raised alert level by day 19');
   await cmd('Take the Marit out of the cove');
   await page.waitForSelector('#screen-debrief:not(.hidden)', { timeout: 30000 });
   await idle();
