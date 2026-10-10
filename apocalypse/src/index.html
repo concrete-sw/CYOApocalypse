@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choose Your Apocalypse · Emergency Operations Terminal</title>
+<meta name="description" content="Choose Your Apocalypse: an AI-run survival game that runs in your browser with your own API key. You pick the end of the world; the Game Master runs it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23070a08'/%3E%3Cpolygon points='16,3 27,9.5 27,22.5 16,29 5,22.5 5,9.5' fill='none' stroke='%2366ff99' stroke-width='2'/%3E%3Cline x1='16' y1='11' x2='16' y2='22' stroke='%2366ff99' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-theme="green">
+<a class="skip" href="#cmdInput">Skip to command bar</a>
+<div id="scanlines" aria-hidden="true"></div>
+<div id="noise" aria-hidden="true"></div>
+<div id="bannerTop" class="easbar lvl-1" role="banner">CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS</div>
+<div id="bannerBottom" class="easbar lvl-1" aria-hidden="true">CIVIL ALERT NETWORK · ROUTINE · NO ACTIVE WARNINGS</div>
+
+<!-- BOOT -->
+<section id="screen-boot" class="screen" aria-label="Boot sequence">
+  <pre id="bootLog" class="boot-log" aria-live="polite"></pre>
+  <button id="bootSkip" class="btn ghost small boot-skip" type="button">Skip ▸</button>
+</section>
+
+<!-- LOGON -->
+<section id="screen-login" class="screen hidden" aria-label="Operator logon">
+  <div class="login-card">
+    <div class="insignia" id="insigniaLogin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Civil Continuity Directorate insignia">
+  <defs>
+    <path id="ring" d="M100,100 m-78,0 a78,78 0 1,1 156,0 a78,78 0 1,1 -156,0"/>
+  </defs>
+  <circle cx="100" cy="100" r="96" fill="none" stroke="currentColor" stroke-width="2"/>
+  <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" stroke-width="1" opacity=".6"/>
+  <text font-family="ui-monospace, monospace" font-size="10" letter-spacing="2" fill="currentColor">
+    <textPath href="#ring" startOffset="1%">EMERGENCY OPERATIONS · CIVIL CONTINUITY DIRECTORATE · </textPath>
+  </text>
+  <polygon points="100,42 143.3,67 143.3,117 100,142 56.7,117 56.7,67" fill="none" stroke="currentColor" stroke-width="2.5"/>
+  <polygon points="100,50 136.4,71 136.4,113 100,134 63.6,113 63.6,71" fill="none" stroke="currentColor" stroke-width="1" opacity=".5"/>
+  <line x1="100" y1="86" x2="100" y2="126" stroke="currentColor" stroke-width="3"/>
+  <line x1="88" y1="126" x2="112" y2="126" stroke="currentColor" stroke-width="3"/>
+  <line x1="100" y1="100" x2="90" y2="126" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+  <line x1="100" y1="100" x2="110" y2="126" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+  <path d="M88,86 a12,12 0 0,1 24,0" fill="none" stroke="currentColor" stroke-width="2"/>
+  <path d="M80,86 a20,20 0 0,1 40,0" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".75"/>
+  <path d="M72,86 a28,28 0 0,1 56,0" fill="none" stroke="currentColor" stroke-width="1" opacity=".5"/>
+  <circle cx="100" cy="86" r="3.5" fill="currentColor"/>
+  <g stroke="currentColor" stroke-width="1.5">
+    <line x1="100" y1="6" x2="100" y2="14"/><line x1="100" y1="186" x2="100" y2="194"/>
+    <line x1="6" y1="100" x2="14" y2="100"/><line x1="186" y1="100" x2="194" y2="100"/>
+  </g>
+  <line x1="62" y1="152" x2="138" y2="152" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="166" text-anchor="middle" font-family="ui-monospace, monospace" font-size="8.5" letter-spacing="3" fill="currentColor">ENDURE · ADAPT · REMAIN</text>
+</svg></div>
+    <p class="dept">CIVIL CONTINUITY DIRECTORATE</p>
+    <h1 class="title">REGIONAL EMERGENCY OPERATIONS TERMINAL</h1>
+    <p class="subtitle">EOC-OS 3.2 · SURVIVOR LIAISON CONSOLE · AUTHORIZED OPERATORS ONLY</p>
+    <div class="consent">
+      <b>NOTICE</b> — This console carries emergency traffic for the regional continuity network. All activity is logged for continuity of operations.
+      Operators are reminded that the network may degrade without warning. Establish the Game Master uplink below to begin.
+    </div>
+    <form id="loginForm" autocomplete="off">
+      <fieldset class="api-box">
+        <legend>Game Master uplink</legend>
+        <label>Provider
+          <select id="providerSelect"></select>
+        </label>
+        <label>API key
+          <input id="apiKey" type="password" placeholder="Paste your key" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Model <span class="muted">(blank = default)</span>
+          <input id="modelInput" type="text" list="modelList" placeholder="">
+          <datalist id="modelList"></datalist>
+        </label>
+        <label id="baseUrlRow">Base URL <span class="muted">(advanced)</span>
+          <input id="baseUrl" type="text" placeholder="">
+        </label>
+        <p id="providerNotes" class="muted small"></p>
+        <label class="check"><input id="rememberKey" type="checkbox"> Remember key in this browser (localStorage; anyone with access to this browser profile can read it)</label>
+        <div class="row">
+          <button id="testConn" class="btn ghost" type="button">Test connection</button>
+          <button id="forgetKey" class="btn ghost" type="button">Forget stored key</button>
+          <span id="connStatus" class="muted small" role="status"></span>
+        </div>
+      </fieldset>
+      <div class="row">
+        <button class="btn primary" type="submit">Establish uplink ▸</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<!-- NEW GAME / RESUME -->
+<section id="screen-newgame" class="screen hidden" aria-label="Survivor registration">
+  <div class="newgame-card">
+    <header class="card-head">
+      <span class="banner">SURVIVOR REGISTRATION</span>
+      <span id="newgameOperator" class="muted"></span>
+    </header>
+    <div class="two-col">
+      <form id="newGameForm">
+        <h2>New survivor</h2>
+        <label>Survivor name
+          <input id="survivorName" type="text" maxlength="40" placeholder="e.g. Dana Reyes" required>
+        </label>
+        <label>Background
+          <select id="background"></select>
+        </label>
+        <p id="backgroundNotes" class="muted small"></p>
+        <label>The apocalypse
+          <select id="apocalypseType"></select>
+        </label>
+        <label id="customPremiseRow" class="hidden">Your premise
+          <textarea id="customPremise" rows="2" placeholder="Describe how the world ends. A sentence or two is enough."></textarea>
+        </label>
+        <label>Difficulty
+          <select id="difficulty">
+            <option value="survivor">Survivor: slower clocks, more to find, warier strangers</option>
+            <option value="hardened" selected>Hardened: realistic</option>
+            <option value="nightmare">Nightmare: fast clocks, picked-over world, predatory strangers</option>
+          </select>
+        </label>
+        <label>Length
+          <select id="gameLength">
+            <option value="short">Short: 14 days</option>
+            <option value="standard" selected>Standard: 30 days</option>
+            <option value="long">Long: 60 days</option>
+          </select>
+        </label>
+        <button class="btn primary" type="submit">Begin ▸</button>
+        <p id="genStatus" class="muted small" role="status"></p>
+        <button id="genCancel" class="btn ghost small hidden" type="button">Cancel</button>
+      </form>
+      <div>
+        <h2>Resume</h2>
+        <ul id="slotList" class="slot-list"></ul>
+        <div class="row">
+          <label class="btn ghost file-btn">Import .json<input id="importFile" type="file" accept="application/json,.json" hidden></label>
+          <button id="backToLogin" class="btn ghost" type="button">◂ Change uplink</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DESKTOP -->
+<section id="screen-desktop" class="screen hidden" aria-label="Operations desktop">
+  <header class="topbar">
+    <span class="sys">EOC · TERMINAL</span>
+    <span id="topDay" class="mono clock" aria-live="off"></span>
+    <span id="topWeather" class="mono"></span>
+    <span id="topDeadline" class="mono deadline"></span>
+    <span id="topSurvivor" class="mono"></span>
+    <span id="topStatus" class="status" role="status" aria-live="polite"></span>
+  </header>
+  <nav class="dock" id="dock" aria-label="Panels"></nav>
+  <main id="windowArea" class="window-area">
+    <div id="watermark" class="watermark" aria-hidden="true">
+      <div class="wm-insignia" id="wmInsignia"></div>
+      <div class="wm-text" id="wmText"></div>
+    </div>
+  </main>
+  <div id="statusBar" class="statusbar" aria-hidden="true"></div>
+  <form id="cmdBar" class="cmdbar" autocomplete="off">
+    <label for="cmdInput" class="prompt">SURVIVOR&gt;</label>
+    <input id="cmdInput" type="text" placeholder="say what you do, or type a command. 'help' lists commands." spellcheck="false">
+    <button class="btn small" type="submit">Act</button>
+  </form>
+</section>
+
+<!-- DEBRIEF -->
+<section id="screen-debrief" class="screen hidden" aria-label="Debrief">
+  <div id="debriefBody" class="debrief"></div>
+</section>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<dialog id="modal" class="modal"><div id="modalBody"></div></dialog>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

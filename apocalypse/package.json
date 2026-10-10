@@ -1,0 +1,12 @@
+{
+  "name": "cyoapocalypse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Choose Your Apocalypse: an AI-run survival game in a single HTML file.",
+  "type": "module",
+  "scripts": {
+    "build": "node dev/build.js",
+    "mock": "node dev/mock-gm.js",
+    "test": "node dev/playthrough.mjs"
+  }
+}
