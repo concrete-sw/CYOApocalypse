@@ -38,7 +38,7 @@ export async function runDebrief({ state, provider, apiKey, model, baseUrl, onSt
   for (let attempt = 1; attempt <= 2 && !d; attempt++) {
     onStatus?.(attempt === 1 ? 'Compiling the record...' : 'Re-requesting the record...');
     try {
-      const raw = await complete(provider, { apiKey, model, baseUrl, json: true, system: 'You write honest, vivid, factual debriefs for a survival story. Output only JSON.', messages: [{ role: 'user', content: prompt }], maxTokens: 4000, temperature: 0.6, signal });
+      const raw = await complete(provider, { apiKey, model, baseUrl, json: true, system: 'You write honest, vivid, factual debriefs for a survival story. Output only JSON.', messages: [{ role: 'user', content: prompt }], maxTokens: 8000, temperature: 0.6, effort: 'low', signal });
       d = extractJSON(raw);
       if (typeof d !== 'object') d = null;
     } catch (err) {

@@ -33,10 +33,10 @@ laptop or a tablet. Your key is stored only in your browser (if you tick
 
 | Provider | Where to get a key | Notes |
 | --- | --- | --- |
-| Anthropic (Claude) | <https://console.anthropic.com/settings/keys> | Direct browser calls supported. Default `claude-sonnet-5-5`. |
-| OpenAI | <https://platform.openai.com/api-keys> | Default `gpt-4.1`. |
-| Google Gemini | <https://aistudio.google.com/apikey> | Free tier available. Default `gemini-2.5-flash`. |
-| DeepSeek | <https://platform.deepseek.com/api_keys> | Default `deepseek-chat`. |
+| Anthropic (Claude) | <https://console.anthropic.com/settings/keys> | Direct browser calls supported. Default `claude-sonnet-5-5`; thinking runs at low effort for turns and medium for building the world. |
+| OpenAI | <https://platform.openai.com/api-keys> | Default `gpt-4.1`. Reasoning models (`gpt-5`, `o4-mini`) work too. |
+| Google Gemini | <https://aistudio.google.com/apikey> | Free tier available. Default `gemini-2.5-flash` (thinking off for speed); `gemini-2.5-pro` thinks and is slower. |
+| DeepSeek | <https://platform.deepseek.com/api_keys> | Default `deepseek-chat`. Output is capped at 8k tokens; a cut-off world is continued in a second call. |
 | xAI (Grok) | <https://console.x.ai/> | Default `grok-4`. |
 | Groq | <https://console.groq.com/keys> | Fast open-weight models. |
 | Mistral | <https://console.mistral.ai/api-keys/> | |
@@ -49,12 +49,23 @@ rejects browser calls (the browser console shows a CORS error), run a small
 proxy that adds the `Access-Control-Allow-Origin` header and point the
 **Custom** provider at it.
 
-**Cost and model choice.** Building the world is one large call (roughly 10 to
-16k output tokens). Each turn sends the whole hidden world plus your state, so
-a standard game is several thousand input tokens per turn. A fast mid-tier
-model (Sonnet, Flash, DeepSeek) is a fine Game Master; larger models write
-better people. Models that cannot reliably produce JSON will fall back to plain
-text often and the state will not advance.
+**Cost and model choice.** Building the world is one large call (roughly 7 to
+10k output tokens; if the model's output limit cuts it off, the game asks it to
+continue and stitches the halves). Each turn sends the whole hidden world plus
+your state, so a standard game is several thousand input tokens per turn; the
+world rides in the system prompt so providers with prefix caching (Anthropic,
+OpenAI, DeepSeek, Gemini) charge most of it at the cached rate. A fast mid-tier
+model (Sonnet, Flash, DeepSeek, GPT-4.1) is a fine Game Master; larger models
+write better people. Small open-weight models (8B local models, most free-tier
+Groq models) rarely manage the long world JSON and will fail to build a world
+or fall back to plain text often.
+
+**"Could not build the world: ... not parseable JSON".** The model's reply
+did not parse after three tries. Usually the output was cut off (pick a model
+with a larger output limit, or a short game) or the model is too small to
+write a long, strict JSON document (pick a stronger one). The raw reply is
+printed to the browser console (F12) and kept at `window.cyoa.lastRawWorld`
+so you can see what came back.
 
 ## How it works
 
@@ -177,6 +188,7 @@ apocalypse/
   dev/build.js            bundles src/ into index.html
   dev/mock-gm.js          offline mock GM for UI testing, with dev/sample-world.json
   dev/engine-check.mjs    engine smoke test (no browser, no key)
+  dev/provider-check.mjs  provider layer test against the mock, including cut-off replies
   dev/playthrough.mjs     Playwright playthrough of the built file over file://
 ```
 
@@ -212,12 +224,17 @@ node apocalypse/dev/mock-gm.js        # http://localhost:8787/v1
 In the game choose **Custom**, base URL `http://localhost:8787/v1`, any key.
 It exercises every panel and state transition; it is not a game.
 
-Two automated checks:
+Three automated checks:
 
 ```bash
-node apocalypse/dev/engine-check.mjs   # the code-owned systems, in Node
+node apocalypse/dev/engine-check.mjs     # the code-owned systems and the tolerant JSON parser, in Node
+node apocalypse/dev/provider-check.mjs   # streaming, finish reasons, and a cut-off world being continued and stitched
 node apocalypse/dev/build.js && node apocalypse/dev/playthrough.mjs   # full UI playthrough with Playwright
 ```
+
+Start the mock with `MOCK_TRUNCATE=1` to have it cut the world reply short
+the way a model with a small output limit does; the game then asks for the
+rest and stitches the halves together.
 
 The playthrough needs Playwright with Chromium (`npm i -g playwright && npx
 playwright install chromium`). It opens the built `index.html` over `file://`,

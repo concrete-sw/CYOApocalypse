@@ -190,6 +190,7 @@ export class App {
     } catch (err) {
       st.textContent = this.abort.signal.aborted ? 'Cancelled.' : `Could not build the world: ${err.message}`;
       st.className = 'danger small';
+      if (err.raw) { this.lastRawWorld = err.raw; console.warn('[cyoa] last raw world reply (also at window.cyoa.lastRawWorld):\n', err.raw); }
     } finally { btn.disabled = false; $('#genCancel').classList.add('hidden'); this.abort = null; }
   }
 

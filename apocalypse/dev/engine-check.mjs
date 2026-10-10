@@ -19,6 +19,19 @@ const { travelPlan, rollTravel, scavengeBudget, resolveEncounter, makeEncounter,
 const { describeAction, buildStateSnapshot, truthForGM } = await eng('gm.js');
 const { computeStats, fallbackDebrief, finalizeDebrief } = await eng('ending.js');
 const { weatherFor, dayOf } = await eng('clock.js');
+const { extractJSON, repairJSON, looksTruncated } = await eng('json.js');
+const { stitch } = await eng('worldGenerator.js');
+
+// Tolerant JSON parsing
+assert.deepEqual(extractJSON('```json\n{"a": 1, "b": [1,2,],}\n```'), { a: 1, b: [1, 2] }, 'fences and trailing commas');
+assert.deepEqual(extractJSON('Here you go:\n{"narrative": "He said \\"hi\\" and left\nquickly", "x": 2} thanks'), { narrative: 'He said "hi" and left\nquickly', x: 2 }, 'prose around, raw newline in string');
+assert.deepEqual(extractJSON('{"a": "it\\\'s", // comment\n "b": /* c */ 1}'), { a: "it's", b: 1 }, 'invalid escape and comments');
+assert.deepEqual(extractJSON('{"a": {"b": [1, 2, {"c": "cut off he'), { a: { b: [1, 2, { c: 'cut off he' }] } }, 'truncated document closed');
+assert.deepEqual(extractJSON('{"a": 1, "b":'), { a: 1 }, 'dangling key dropped');
+assert.ok(looksTruncated('{"a": 1, "b": "x') && !looksTruncated('{"a": 1}') && !looksTruncated('```json\n{"a":1}\n```'));
+assert.equal(stitch('{"a": "hello wor', 'wor' + 'ld", "b": 2}'), '{"a": "hello world", "b": 2}', 'stitch drops repeated overlap');
+assert.equal(stitch('{"a": 1,', ' "b": 2}'), '{"a": 1, "b": 2}', 'stitch without overlap');
+console.log('✓ tolerant JSON: fences, comments, escapes, truncation, stitching');
 const { getLocation } = await eng('world.js');
 
 const raw = JSON.parse(readFileSync(path.join(here, 'sample-world.json'), 'utf8'));

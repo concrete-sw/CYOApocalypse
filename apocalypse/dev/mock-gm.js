@@ -21,9 +21,19 @@ const J = (narrative, extra = {}) => JSON.stringify({ narrative, speaker: 'narra
 
 function words(text) { const m = text.match(/Survivor(?: says)?:\s*"?([^"\n]*)"?/); return m ? m[1] : ''; }
 
-function reply(text) {
+// MOCK_TRUNCATE=1 makes the world reply stop early with finish_reason "length"
+// and serves the remainder (with a small repeated overlap) on the continuation
+// request, to exercise the game's continue-and-stitch path.
+const TRUNCATE = process.env.MOCK_TRUNCATE === '1';
+const CUT = Math.floor(sampleWorld.length * 0.6);
+
+function reply(text, msgs) {
   if (text.includes('Reply with the single word READY')) return 'READY';
-  if (text.includes('designing the hidden ground truth')) return sampleWorld;
+  if (text.includes('Continue EXACTLY from where it stopped')) {
+    const partial = [...msgs].reverse().find(m => m.role === 'assistant')?.content || '';
+    return { text: sampleWorld.slice(Math.max(0, partial.length - 24)), finish: 'stop' };
+  }
+  if (text.includes('designing the hidden ground truth')) return TRUNCATE ? { text: sampleWorld.slice(0, CUT), finish: 'length' } : sampleWorld;
   if (text.includes('survival game that has now ENDED')) {
     return JSON.stringify({
       epitaph: 'They kept moving when staying would have been easier, and they listened when the radio told the truth.',
@@ -102,13 +112,15 @@ const server = http.createServer((req, res) => {
     let msgs = [];
     try { msgs = JSON.parse(body).messages || []; } catch { /* ignore */ }
     const last = [...msgs].reverse().find(m => m.role === 'user')?.content || '';
-    const text = reply(typeof last === 'string' ? last : JSON.stringify(last));
+    const out = reply(typeof last === 'string' ? last : JSON.stringify(last), msgs);
+    const text = typeof out === 'string' ? out : out.text;
+    const finish = typeof out === 'string' ? 'stop' : out.finish;
     res.writeHead(200, { ...cors, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
     const chunks = text.match(/[\s\S]{1,80}/g) || [];
     let i = 0;
     const tick = () => {
       if (i < chunks.length) { res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunks[i++] } }] })}\n\n`); setTimeout(tick, 2); }
-      else { res.write('data: [DONE]\n\n'); res.end(); }
+      else { res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finish }] })}\n\n`); res.write('data: [DONE]\n\n'); res.end(); }
     };
     tick();
   });

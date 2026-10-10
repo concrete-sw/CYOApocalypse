@@ -68,7 +68,7 @@ DESIGN REQUIREMENTS
 8. RADIO: 4 to 7 channels with frequencies as strings (e.g. "162.400", "146.520", "7.200", "1610"), each with owner, kind, a schedule (fromDay, toDay or null, hours as a list of 0-23 or empty for always) and 1-4 messages with fromDay increasing. Include: an official or automated channel, a faction channel with truthful false messages, a survivor net, and the channel that carries the radio clue. Write messages as spoken, with the texture of real broadcasts.
 9. Everything is fictional. Invent names, companies and agencies. No real people. Keep violence described with restraint.
 10. Where a value is absent use JSON null, never the string "null", "none" or "N/A". Numbers are numbers, not strings.
-11. Keep the whole document under about 6000 words: descriptions and backgrounds are one paragraph of 3-5 sentences, prologue and situationReport within their word counts, radio messages one to three sentences. Specific beats long.
+11. SIZE MATTERS: the whole document must stay under about 3500 words (roughly 6000 tokens) or it will be cut off. Location descriptions and npc backgrounds are 2-4 sentences, travelNotes and personality one sentence, radio messages one to three sentences, the prologue and situationReport within their word counts. Hit the minimum counts in the schema and stop; specific beats long.
 
 SCHEMA (follow exactly; no extra top-level keys):
 ${WORLD_SCHEMA_TEXT}

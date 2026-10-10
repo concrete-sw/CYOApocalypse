@@ -4,8 +4,8 @@
 
 import { GM_SYSTEM_PROMPT } from '../prompts/gmSystem.js';
 import { buildSummaryPrompt } from '../prompts/summary.js';
-import { extractJSON, extractPartialNarrative } from './json.js';
-import { complete } from '../providers/index.js';
+import { extractJSON, extractPartialNarrative, looksTruncated } from './json.js';
+import { complete, completeWithMeta } from '../providers/index.js';
 import { clamp, asArray, num, str } from './util.js';
 import { dayOf, hourOf, phaseOf, isNight, formatTime, formatHM, formatDuration, MIN_PER_DAY, daysLeft } from './clock.js';
 import { addLog, addFact, queueEvent, takeEvents, applyChanges, advanceTime, checkEnd, endingAvailable, endingStatus, foundClue, retire, DOOM_LABEL } from './state.js';
@@ -315,18 +315,23 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
   let raw = '';
   let parsed = null;
   let fallback = false;
+  let cutOff = false;
   for (let attempt = 1; attempt <= 2; attempt++) {
     onStatus?.(attempt === 1 ? 'Transmitting...' : 'Malformed reply; retrying...');
     raw = '';
     let lastShown = '';
-    const msgs = attempt === 1 ? messages : [...messages.slice(0, -1), { role: 'user', content: `${actionText}\n\n(Your previous reply was not valid JSON. Reply with exactly one JSON object as specified, "narrative" first.)` }];
+    const nag = cutOff ? 'Your previous reply was cut off at the output limit. Keep the narrative under 180 words and the JSON compact.' : 'Your previous reply was not valid JSON. Reply with exactly one JSON object as specified, "narrative" first, no fences or commentary.';
+    const msgs = attempt === 1 ? messages : [...messages.slice(0, -1), { role: 'user', content: `${actionText}\n\n(${nag})` }];
     try {
-      raw = await complete(provider, { apiKey, model, baseUrl, json: true, system, messages: msgs, maxTokens: 2500, temperature: 0.85, signal }, (chunk, text) => {
+      const r = await completeWithMeta(provider, { apiKey, model, baseUrl, json: true, system, messages: msgs, maxTokens: 6000, temperature: 0.85, effort: 'low', signal }, (chunk, text) => {
         const n = extractPartialNarrative(text);
         if (n != null && n !== lastShown) { lastShown = n; onNarrative?.(n); }
       });
+      raw = r.text;
+      if (r.finishReason === 'refusal') throw new Error('The model declined to continue this scene. Try a different action.');
+      cutOff = r.finishReason === 'length' || looksTruncated(raw);
     } catch (err) {
-      if (signal?.aborted || attempt === 2) throw err;
+      if (signal?.aborted || attempt === 2 || /declined/.test(err.message)) throw err;
       continue;
     }
     try {
@@ -370,7 +375,7 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
     try {
       onStatus?.('Updating the record...');
       const turns = old.map(t => ({ role: t.role, content: t.role === 'assistant' ? safeNarrative(t.content) : t.content }));
-      state.summary = (await complete(provider, { apiKey, model, baseUrl, json: false, system: 'You summarise role-play transcripts precisely.', messages: [{ role: 'user', content: buildSummaryPrompt({ previousSummary: state.summary, turns }) }], maxTokens: 1200, temperature: 0.3, signal })).trim();
+      state.summary = (await complete(provider, { apiKey, model, baseUrl, json: false, system: 'You summarise role-play transcripts precisely.', messages: [{ role: 'user', content: buildSummaryPrompt({ previousSummary: state.summary, turns }) }], maxTokens: 2000, temperature: 0.3, effort: 'low', signal })).trim();
     } catch { state.history.unshift(...old); }
   }
   const ended = checkEnd(state);

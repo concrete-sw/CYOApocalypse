@@ -2,11 +2,13 @@
 //
 //   { id, name, defaultModel, models, keyUrl, notes, defaultBaseUrl,
 //     allowCustomBaseUrl, async *stream({ apiKey, model, system, messages,
-//     json, maxTokens, temperature, baseUrl, signal }) }
+//     json, maxTokens, temperature, effort, baseUrl, signal }) }
 //
-// stream() yields text chunks. To add a provider, either create a file like
-// anthropic.js / gemini.js and add it here, or (for anything that speaks the
-// OpenAI chat-completions protocol) add one makeOpenAICompatible() entry.
+// stream() yields text chunks and finally RETURNS a finish reason:
+// 'stop' (natural end), 'length' (cut off at the output limit), 'refusal'
+// (the model declined), or null (unknown). To add a provider, either create a
+// file like anthropic.js / gemini.js and add it here, or (for anything that
+// speaks the OpenAI chat-completions protocol) add one makeOpenAICompatible() entry.
 
 import { anthropic } from './anthropic.js';
 import { gemini } from './gemini.js';
@@ -16,14 +18,14 @@ export const PROVIDERS = [
   anthropic,
   makeOpenAICompatible({
     id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4.1', models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'o4-mini'],
-    keyUrl: 'https://platform.openai.com/api-keys', notes: 'Keys start with "sk-".'
+    defaultModel: 'gpt-4.1', models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-5', 'o4-mini'],
+    keyUrl: 'https://platform.openai.com/api-keys', notes: 'Keys start with "sk-".', maxTokensParam: 'max_completion_tokens', noTemperatureFor: /^(o\d|gpt-5)/
   }),
   gemini,
   makeOpenAICompatible({
     id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com',
     defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'],
-    keyUrl: 'https://platform.deepseek.com/api_keys', notes: 'Inexpensive and capable at role-play. Output is capped at 8k tokens, so prefer short or standard games.', maxOutputTokens: 8192
+    keyUrl: 'https://platform.deepseek.com/api_keys', notes: 'Inexpensive and capable at role-play. Output is capped at 8k tokens; the game continues a cut-off world in a second call.', maxOutputTokens: 8192
   }),
   makeOpenAICompatible({
     id: 'xai', name: 'xAI (Grok)', baseUrl: 'https://api.x.ai/v1',
@@ -33,7 +35,7 @@ export const PROVIDERS = [
   makeOpenAICompatible({
     id: 'groq', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.3-70b-versatile', models: ['llama-3.3-70b-versatile'],
-    keyUrl: 'https://console.groq.com/keys', notes: 'Very fast open-weight models.'
+    keyUrl: 'https://console.groq.com/keys', notes: 'Very fast open-weight models. Smaller models struggle with the long world JSON; expect retries.'
   }),
   makeOpenAICompatible({
     id: 'mistral', name: 'Mistral', baseUrl: 'https://api.mistral.ai/v1',
@@ -43,7 +45,7 @@ export const PROVIDERS = [
   makeOpenAICompatible({
     id: 'ollama', name: 'Ollama (local)', baseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.1', models: [], keyUrl: 'https://ollama.com/',
-    notes: 'No key needed. Start Ollama with OLLAMA_ORIGINS="*" so the browser may call it.',
+    notes: 'No key needed. Start Ollama with OLLAMA_ORIGINS="*" so the browser may call it. Small local models rarely manage the world JSON; use a 30B+ model.',
     allowCustomBaseUrl: true
   }),
   makeOpenAICompatible({
@@ -58,12 +60,18 @@ export function getProvider(id) {
   return PROVIDERS.find(p => p.id === id) || PROVIDERS[0];
 }
 
+/** Collect a whole streamed reply, reporting chunks via onChunk. Returns { text, finishReason }. */
+export async function completeWithMeta(provider, opts, onChunk) {
+  let text = '';
+  const it = provider.stream(opts);
+  for (;;) {
+    const { value, done } = await it.next();
+    if (done) return { text, finishReason: typeof value === 'string' ? value : null };
+    if (value) { text += value; if (onChunk) onChunk(value, text); }
+  }
+}
+
 /** Collect a whole streamed reply into one string, reporting chunks via onChunk. */
 export async function complete(provider, opts, onChunk) {
-  let text = '';
-  for await (const chunk of provider.stream(opts)) {
-    text += chunk;
-    if (onChunk) onChunk(chunk, text);
-  }
-  return text;
+  return (await completeWithMeta(provider, opts, onChunk)).text;
 }
