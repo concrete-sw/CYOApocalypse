@@ -18,6 +18,7 @@ export function registerHelp(app, { reg }) {
           h('li', {}, 'Everything that happened on day 3 is still happening on day 20. Watch the EVENT lines.'),
           h('li', {}, 'You can type anything at the SURVIVOR> prompt. The world answers in its own terms.')),
         h('h3', {}, 'Command bar'),
+        h('p', { class: 'small' }, 'Type anything. The world attempts exactly what you describe, and what is impossible fails in its own way. The shortcuts below are optional conveniences that fire only when their target is real (a place you know, an item you carry, a person you have met); anything else goes to the Game Master as written. Start a line with / to force a shortcut.'),
         h('table', { class: 'small' }, h('tbody', {}, [
           ['go <place>', 'travel to a known place'], ['look', 'look around where you are'], ['search <area>', 'search a specific spot here'],
           ['rest [hours]', 'sleep (6h default)'], ['wait [hours]', 'let time pass'], ['skip', 'skip ahead to the next development'],

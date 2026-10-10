@@ -111,7 +111,13 @@ sometimes lies, hints that cost, consequences that bite later) live in
 ## Playing
 
 - **Log**: the narrative, world events, the situation report, and the choice
-  buttons. You can always type anything at the `SURVIVOR>` prompt instead.
+  buttons. The choices are suggestions, not a menu: type anything at the
+  `SURVIVOR>` prompt and the world attempts exactly what you describe, in
+  your words, speech included. The GM decides what is possible and what it
+  costs. A handful of shortcuts (`map`, `inventory`, `rest 4 hours`, `go to
+  the marina`, `tune 162.4`, `save`) fire only when their target is real;
+  anything else goes to the GM untouched. Start a line with `/` to force a
+  shortcut.
 - **Status**: vitals as bars, conditions, the body diagram (regions tint by
   injury, pulse when infected, dash when treated), injuries with treatment
   buttons, illness, the clock, the alert level, and tasks resolving later.
@@ -151,7 +157,7 @@ opens panels, `Esc` closes the focused panel, `Tab` moves through everything,
 and clicking streaming text skips the typewriter. Windows remember where you
 put them; double-click a title bar to maximize, and the Tile button arranges
 every open window. The live vitals strip at the bottom shows your numbers
-without opening Status. The Help panel lists every command.
+without opening Status. The Help panel lists the shortcuts.
 
 ## Adding a provider
 

@@ -10,6 +10,7 @@ import { meet, recruit, lose, adjustLoyalty, MOODS, withPlayer, dailyUpkeep, che
 import { meetFaction, adjustStanding, factionState } from './factions.js';
 import { nightlyRaidRoll, burnFuel, claimShelter, abandonShelter } from './shelter.js';
 import { getLocation, getNpc, getFaction, getClue, locState, revealLocation } from './world.js';
+import { travelPlan } from './encounters.js';
 
 export const SKILLS = ['medicine', 'mechanics', 'combat', 'scavenging', 'stealth', 'leadership', 'survival', 'electronics', 'farming', 'negotiation'];
 export const DOOM_LABEL = { 1: 'ADVISORY', 2: 'WATCH', 3: 'REGIONAL EMERGENCY', 4: 'CONTINENTAL DARK', 5: 'EXTINCTION EVENT' };
@@ -249,6 +250,14 @@ export function applyChanges(state, changes, ctx = {}) {
   if (changes.shelter && typeof changes.shelter === 'object') {
     if (changes.shelter.claim && state.location === changes.shelter.claim) { const r = claimShelter(state, changes.shelter.claim); if (r.ok) notices.push(r.notice); }
     if (changes.shelter.abandon === true && state.shelter) { const r = abandonShelter(state); if (r.ok) notices.push(r.notice); }
+  }
+  if (typeof changes.moveTo === 'string' && changes.moveTo !== state.location && getLocation(state, changes.moveTo) && state.discovered.locations.includes(changes.moveTo) && !ctx.noMove) {
+    const plan = travelPlan(state, changes.moveTo);
+    state.location = changes.moveTo;
+    locState(state, changes.moveTo).visits++;
+    state.stats.distance += plan.distance;
+    ctx.travelMinutes = plan.minutes;
+    notices.push(`Travelled to ${getLocation(state, changes.moveTo).name}`);
   }
   if (changes.hintGiven === true) { state.hints++; v.morale = clamp(v.morale - 5); notices.push('Hint taken. It cost you some resolve.'); }
 

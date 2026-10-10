@@ -2280,6 +2280,216 @@ function shelterSummary(state) {
 return { claimShelter, abandonShelter, fortify, deposit, withdraw, recoverCache, burnFuel, nightlyRaidRoll, shelterSummary };
 })();
 
+// ---- js/engine/encounters.js ----
+__m["js/engine/encounters.js"] = (() => {
+const { clamp, pick, overlap } = __m["js/engine/util.js"];
+const { getLocation, locState, effectiveDanger } = __m["js/engine/world.js"];
+const { diff } = __m["js/engine/survival.js"];
+const { isNight } = __m["js/engine/clock.js"];
+const { movementPenalty, combatPenalty, addInjury, REGION_LABEL } = __m["js/engine/body.js"];
+const { weaponRating, spendAmmo, overweightFactor, removeItem, genericItem } = __m["js/engine/inventory.js"];
+const { withPlayer, skillCount, adjustLoyalty, lose } = __m["js/engine/companions.js"];
+const { holderOf, adjustStanding, hostilityMod } = __m["js/engine/factions.js"];
+const { getNpc } = __m["js/engine/world.js"];
+// Travel, encounters, combat and escape, and scavenging: all resolved by code.
+// The GM is told the outcome and narrates it.
+
+
+
+
+
+
+
+
+
+
+function distance(a, b) { return Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0)); }
+
+/** Time and risk of travelling to a location from where the survivor stands. */
+function travelPlan(state, toId) {
+  const from = getLocation(state, state.location), to = getLocation(state, toId);
+  const dist = distance(from, to);
+  const w = state.weather?.today || {};
+  const night = isNight(state.clock.minutes);
+  let minutes = Math.max(1, dist) * 6 * (w.travel || 1) * (1 + movementPenalty(state)) * (overweightFactor(state) > 1 ? 1.25 : 1) * (night ? 1.15 : 1);
+  if (state.flags.includes('has_vehicle')) minutes *= 0.35;
+  minutes = clamp(Math.round(minutes), 15, 16 * 60);
+  const t = state.truth.threat || {};
+  let risk = (effectiveDanger(state, toId) * 5 + (state.threat.level || 0) * 5 + (t.baseLevel || 0) * 2 + dist * 0.15) * (w.encounter || 1) * diff(state).encounter;
+  if (night) risk *= Number(t.nightMultiplier) || 1.5;
+  risk -= skillCount(state, 'stealth') * 6 + skillCount(state, 'scavenging') * 2;
+  risk += withPlayer(state).length * 2;
+  if (state.flags.some(f => f.startsWith('lured_by'))) risk = 100;
+  return { distance: Math.round(dist), minutes, risk: clamp(Math.round(risk), 3, 100), to, from };
+}
+
+function rollTravel(state, toId, rnd = Math.random) {
+  const plan = travelPlan(state, toId);
+  const encounter = rnd() * 100 < plan.risk ? makeEncounter(state, plan.to, rnd, { ambush: plan.risk >= 100, context: 'travel' }) : null;
+  return { ...plan, encounter };
+}
+
+function makeEncounter(state, loc, rnd = Math.random, { ambush = false, context = 'travel' } = {}) {
+  const holder = holderOf(state, loc.id);
+  const humansWeight = clamp(0.35 + (holder ? 0.3 : 0) + (diff(state).hostility - 1) * 0.2, 0.1, 0.85);
+  const kind = rnd() < humansWeight ? 'humans' : 'threat';
+  const t = state.truth.threat || {};
+  const strength = clamp(Math.round((Number(t.baseLevel) || 1) + (state.threat.level || 0) * 0.8 + effectiveDanger(state, loc.id) * 0.6 + (isNight(state.clock.minutes) ? 1.5 : 0) + (ambush ? 2 : 0) + rnd() * 2), 1, 10);
+  const faction = kind === 'humans' && holder && rnd() < 0.7 ? holder : null;
+  const flavor = kind === 'threat' ? (t.name || 'the threat')
+    : faction ? `a ${faction.name} patrol`
+    : pick(['desperate scavengers', 'armed looters', 'a family on the road who may not be what they seem', 'a lone stranger with a story', 'men in mismatched uniforms demanding a toll'], rnd);
+  return { kind, strength, factionId: faction?.id || null, flavor, ambush, context, at: state.clock.minutes, locationId: loc.id, resolved: false };
+}
+
+function playerPower(state) {
+  const items = state.inventory.items;
+  let p = 1 + skillCount(state, 'combat') * 2 + weaponRating(items);
+  for (const id of withPlayer(state)) { const npc = getNpc(state, id); p += npc?.skills?.includes('combat') ? 1.5 : 0.5; }
+  p -= combatPenalty(state) * 4;
+  if (state.vitals.fatigue < 20) p -= 1.5;
+  if (state.vitals.health < 40) p -= 1;
+  if (state.vitals.hunger < 15) p -= 0.5;
+  return Math.max(0.5, p);
+}
+
+function classifyApproach(text) {
+  const t = String(text || '').toLowerCase();
+  if (/\b(fight|attack|shoot|open fire|swing|charge|strike|kill|stab|hit|punch|club|defend myself|stand and)\b/.test(t)) return 'fight';
+  if (/\b(run|flee|escape|sprint|bolt|retreat|get away|back off|get out|leave fast|drive off)\b/.test(t)) return 'flee';
+  if (/\b(hide|wait|crouch|duck|stay still|quiet|take cover|freeze|sneak|slip past|lie low)\b/.test(t)) return 'hide';
+  if (/\b(talk|negotiate|trade|offer|surrender|hands up|call out|greet|parley|bargain|plead|hail|reason|ask them|tell them|say)\b/.test(t)) return 'talk';
+  return 'improvise';
+}
+function encounterChoices(enc) {
+  return enc.kind === 'humans' ? ['Fight', 'Run', 'Hide', 'Talk to them'] : ['Fight', 'Run', 'Hide and wait'];
+}
+
+/** Resolve the current encounter with an approach. Mutates state; returns the result the GM narrates. */
+function resolveEncounter(state, approachIn, rnd = Math.random) {
+  const enc = state.encounter; if (!enc) return null;
+  const items = state.inventory.items;
+  const power = playerPower(state); const S = enc.strength;
+  const night = isNight(state.clock.minutes);
+  let approach = approachIn;
+  let note = '';
+  if (approach === 'talk' && enc.kind !== 'humans') { approach = 'fight'; note = 'The survivor tried to reason with something that does not reason; it came to a fight.'; }
+  const faction = enc.factionId ? (state.truth.factions || []).find(f => f.id === enc.factionId) : null;
+  const standing = faction ? state.factions[faction.id]?.standing || 0 : 0;
+  const hostility = faction ? hostilityMod(state, faction.id) : diff(state).hostility;
+  const res = { approach, outcome: '', injuries: [], itemsLost: [], companionCasualty: null, ammoUsed: 0, noise: 0, standingDelta: 0, moraleDelta: 0, gift: false, note, text: '' };
+
+  const fightChance = clamp(45 + (power - S) * 9 - (enc.ambush ? 15 : 0), 8, 92);
+  const fleeChance = clamp(55 + skillCount(state, 'stealth') * 8 - S * 5 - movementPenalty(state) * 40 - (state.vitals.fatigue < 25 ? 15 : 0) - (enc.ambush ? 15 : 0), 8, 92);
+  const hideChance = clamp(50 + skillCount(state, 'stealth') * 12 - withPlayer(state).length * 6 + (night ? 10 : 0) - (enc.ambush ? 30 : 0), 5, 90);
+  const talkChance = clamp(40 + skillCount(state, 'negotiation') * 12 + standing / 4 - (hostility - 1) * 35 - (enc.ambush ? 10 : 0), 5, 90);
+  if (approach === 'improvise') { approach = fightChance >= fleeChance ? 'fight' : 'flee'; note = `The survivor improvised something of their own; the game resolved it with the odds of ${approach === 'fight' ? 'fighting' : 'getting away'}. Narrate THEIR idea, with this outcome.`; }
+  const roll = rnd() * 100;
+
+  const hurt = sev => {
+    const type = enc.kind === 'threat' ? pick(['bite', 'laceration', 'bruise', 'puncture'], rnd) : pick(['gunshot', 'cut', 'bruise', 'fracture'], rnd);
+    const region = pick(['leftArm', 'rightArm', 'leftLeg', 'rightLeg', 'torso', 'abdomen', 'leftHand', 'rightHand', 'head'], rnd);
+    const inj = addInjury(state, { region, type, severity: sev }, rnd);
+    res.injuries.push({ region: inj.region, type: inj.type, severity: inj.severity });
+  };
+  const dropItems = (n, protectWeapons = true) => {
+    const cands = items.filter(x => !(protectWeapons && x.category === 'weapon')).sort(() => rnd() - 0.5).slice(0, n);
+    for (const c of cands) { removeItem(items, c.id, 1); res.itemsLost.push(c.name); }
+  };
+  const casualty = p => {
+    const ids = withPlayer(state); if (!ids.length || rnd() >= p) return;
+    const id = pick(ids, rnd); const npc = getNpc(state, id);
+    if (rnd() < 0.45) { lose(state, id, 'died'); res.companionCasualty = { id, name: npc?.name || id, how: 'died' }; }
+    else { state.companions[id].hurt = (state.companions[id].hurt || 0) + 1; adjustLoyalty(state, id, -5); res.companionCasualty = { id, name: npc?.name || id, how: 'hurt' }; }
+  };
+  const useAmmo = () => { if (weaponRating(items) >= 3) { res.ammoUsed = spendAmmo(items, 2 + Math.floor(rnd() * 5)); res.noise += 2; } else res.noise += 1; };
+
+  state.stats.encounters++;
+  if (approach === 'fight') {
+    useAmmo();
+    if (roll < fightChance * 0.55) { res.outcome = 'won'; state.stats.kills++; res.moraleDelta = 5; }
+    else if (roll < fightChance) { res.outcome = 'won_hurt'; hurt(1 + (rnd() < 0.4 ? 1 : 0)); state.stats.kills++; res.moraleDelta = 1; }
+    else if (roll < fightChance + 25) { res.outcome = 'lost'; hurt(2); dropItems(1); casualty(0.3); res.moraleDelta = -8; }
+    else { res.outcome = 'lost_badly'; hurt(2); hurt(1 + (rnd() < 0.5 ? 1 : 0)); dropItems(2, false); casualty(0.5); res.moraleDelta = -15; }
+    if (faction) res.standingDelta = -15;
+  } else if (approach === 'flee') {
+    if (roll < fleeChance) { res.outcome = 'escaped'; }
+    else { res.outcome = 'escaped_hurt'; hurt(1 + (rnd() < 0.3 ? 1 : 0)); if (rnd() < 0.4) dropItems(1); res.moraleDelta = -4; }
+    if (faction) res.standingDelta = -3;
+  } else if (approach === 'hide') {
+    if (roll < hideChance) { res.outcome = 'hid'; }
+    else { res.outcome = 'ambushed'; hurt(2); dropItems(1); casualty(0.25); res.moraleDelta = -8; res.noise += 1; }
+  } else if (approach === 'talk') {
+    if (roll < talkChance) { res.outcome = 'talked'; res.standingDelta = faction ? 8 : 0; res.moraleDelta = 3; res.gift = rnd() < 0.4; }
+    else { res.outcome = 'talk_failed'; if (rnd() < 0.5) { hurt(1); dropItems(1); } else dropItems(2); res.standingDelta = faction ? -5 : 0; res.moraleDelta = -5; }
+  }
+  state.vitals.morale = clamp(state.vitals.morale + res.moraleDelta);
+  if (faction && res.standingDelta) adjustStanding(state, faction.id, res.standingDelta);
+  if (res.noise) {
+    state.threat.local[enc.locationId] = clamp((state.threat.local[enc.locationId] || 0) + res.noise, 0, 5);
+    if (state.shelter?.locationId === enc.locationId) state.shelter.noise = Math.min(5, state.shelter.noise + 1);
+  }
+  enc.resolved = true; enc.result = res;
+  state.encounter = null;
+  state.flags = state.flags.filter(f => !f.startsWith('lured_by'));
+  res.text = summarize(res, enc);
+  return res;
+}
+
+function summarize(res, enc) {
+  const parts = [`Against ${enc.flavor} (strength ${enc.strength}/10) the survivor chose to ${res.approach.toUpperCase()}; outcome: ${res.outcome.replace(/_/g, ' ').toUpperCase()}.`];
+  if (res.injuries.length) parts.push(`Survivor injured: ${res.injuries.map(i => `${i.type} to the ${REGION_LABEL[i.region].toLowerCase()} (severity ${i.severity})`).join('; ')}.`);
+  else parts.push('Survivor unhurt.');
+  if (res.ammoUsed) parts.push(`Ammunition spent: ${res.ammoUsed}.`);
+  if (res.itemsLost.length) parts.push(`Items lost or dropped: ${res.itemsLost.join(', ')}.`);
+  if (res.companionCasualty) parts.push(`Companion ${res.companionCasualty.name} ${res.companionCasualty.how === 'died' ? 'was KILLED' : 'was hurt'}.`);
+  if (res.standingDelta) parts.push(`Faction standing ${res.standingDelta > 0 ? '+' : ''}${res.standingDelta}.`);
+  if (res.gift) parts.push('They parted on good terms; a small gift or useful information changes hands (you may add ONE modest item or a fact).');
+  if (res.noise) parts.push('It was loud; the area is more dangerous now.');
+  if (res.note) parts.push(res.note);
+  return parts.join(' ');
+}
+
+// ---------------------------------------------------------------- scavenging
+const RES_TO_CAT = { food: 'food', water: 'water', medical: 'medical', fuel: 'fuel', materials: 'material', weapons: 'weapon' };
+
+/** What a search of an area can yield; decided before the GM speaks. */
+function scavengeBudget(state, locationId, area, rnd = Math.random) {
+  const loc = getLocation(state, locationId); const ls = locState(state, locationId); const d = diff(state);
+  const res = ls.resources; const total = Object.values(res).reduce((a, b) => a + b, 0);
+  const skill = skillCount(state, 'scavenging'); const w = state.weather?.today || {};
+  const areaKey = String(area || 'general').toLowerCase().trim();
+  const repeat = ls.searched.filter(a => a === areaKey).length;
+  const night = isNight(state.clock.minutes);
+  let roll = rnd() * 100 + skill * 10 + Math.min(20, total * 2) * d.scarcity * (w.scavenge || 1) - repeat * 25 - (night ? 10 : 0);
+  if ((loc.sharpEyeDetails || []).some(s => overlap(s, areaKey) > 0)) roll += 10;
+  let count = roll < 30 ? 0 : roll < 60 ? 1 : roll < 88 ? 2 : 3;
+  if (total === 0) count = 0;
+  const pool = Object.entries(res).filter(([, v]) => v > 0).flatMap(([k, v]) => Array(k === 'weapons' ? Math.ceil(v / 2) : v).fill(RES_TO_CAT[k]));
+  const categories = [];
+  for (let i = 0; i < count && pool.length; i++) categories.push(pick(pool, rnd));
+  const quality = roll > 95 ? 'good' : roll > 60 ? 'fair' : 'poor';
+  let hiddenIndex = null;
+  const hidden = (loc.hidden || []).map((hh, i) => ({ ...hh, i })).filter(hh => !ls.hiddenFound.includes(hh.i));
+  for (const hh of hidden) { if (overlap(hh.where, areaKey) > 0 && rnd() < 0.85) { hiddenIndex = hh.i; break; } }
+  if (hiddenIndex === null && hidden.length && roll > 85 && rnd() < 0.3) hiddenIndex = hidden[0].i;
+  const dangerChance = (effectiveDanger(state, locationId) * 5 + (state.threat.level || 0) * 2 + (night ? 12 : 0)) * d.encounter;
+  const disturbance = rnd() * 100 < dangerChance ? makeEncounter(state, loc, rnd, { context: 'search' }) : null;
+  const minutes = 45 + Math.round(rnd() * 30) + categories.length * 10;
+  ls.searched.push(areaKey);
+  return { count: categories.length, categories, quality, hiddenIndex, minutes, disturbance, suggestions: categories.map(c => genericItem(c, rnd, quality).name) };
+}
+function applyDepletion(state, locationId, categories, rnd = Math.random) {
+  const ls = locState(state, locationId);
+  for (const c of categories) {
+    const k = Object.keys(RES_TO_CAT).find(key => RES_TO_CAT[key] === c);
+    if (k && ls.resources[k] > 0 && rnd() < 0.6) ls.resources[k]--;
+  }
+}
+
+return { distance, travelPlan, rollTravel, makeEncounter, playerPower, classifyApproach, encounterChoices, resolveEncounter, scavengeBudget, applyDepletion };
+})();
+
 // ---- js/engine/state.js ----
 __m["js/engine/state.js"] = (() => {
 const { clamp, asArray, str, num } = __m["js/engine/util.js"];
@@ -2291,8 +2501,10 @@ const { meet, recruit, lose, adjustLoyalty, MOODS, withPlayer, dailyUpkeep, chec
 const { meetFaction, adjustStanding, factionState } = __m["js/engine/factions.js"];
 const { nightlyRaidRoll, burnFuel, claimShelter, abandonShelter } = __m["js/engine/shelter.js"];
 const { getLocation, getNpc, getFaction, getClue, locState, revealLocation } = __m["js/engine/world.js"];
+const { travelPlan } = __m["js/engine/encounters.js"];
 // Game state: everything the code owns. The GM proposes changes; applyChanges
 // validates every id against the truth before accepting anything.
+
 
 
 
@@ -2541,6 +2753,14 @@ function applyChanges(state, changes, ctx = {}) {
   if (changes.shelter && typeof changes.shelter === 'object') {
     if (changes.shelter.claim && state.location === changes.shelter.claim) { const r = claimShelter(state, changes.shelter.claim); if (r.ok) notices.push(r.notice); }
     if (changes.shelter.abandon === true && state.shelter) { const r = abandonShelter(state); if (r.ok) notices.push(r.notice); }
+  }
+  if (typeof changes.moveTo === 'string' && changes.moveTo !== state.location && getLocation(state, changes.moveTo) && state.discovered.locations.includes(changes.moveTo) && !ctx.noMove) {
+    const plan = travelPlan(state, changes.moveTo);
+    state.location = changes.moveTo;
+    locState(state, changes.moveTo).visits++;
+    state.stats.distance += plan.distance;
+    ctx.travelMinutes = plan.minutes;
+    notices.push(`Travelled to ${getLocation(state, changes.moveTo).name}`);
   }
   if (changes.hintGiven === true) { state.hints++; v.morale = clamp(v.morale - 5); notices.push('Hint taken. It cost you some resolve.'); }
 
@@ -2801,216 +3021,6 @@ function registerCompanions(app, { S, reg, readOnly }) {
 }
 
 return { registerCompanions };
-})();
-
-// ---- js/engine/encounters.js ----
-__m["js/engine/encounters.js"] = (() => {
-const { clamp, pick, overlap } = __m["js/engine/util.js"];
-const { getLocation, locState, effectiveDanger } = __m["js/engine/world.js"];
-const { diff } = __m["js/engine/survival.js"];
-const { isNight } = __m["js/engine/clock.js"];
-const { movementPenalty, combatPenalty, addInjury, REGION_LABEL } = __m["js/engine/body.js"];
-const { weaponRating, spendAmmo, overweightFactor, removeItem, genericItem } = __m["js/engine/inventory.js"];
-const { withPlayer, skillCount, adjustLoyalty, lose } = __m["js/engine/companions.js"];
-const { holderOf, adjustStanding, hostilityMod } = __m["js/engine/factions.js"];
-const { getNpc } = __m["js/engine/world.js"];
-// Travel, encounters, combat and escape, and scavenging: all resolved by code.
-// The GM is told the outcome and narrates it.
-
-
-
-
-
-
-
-
-
-
-function distance(a, b) { return Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0)); }
-
-/** Time and risk of travelling to a location from where the survivor stands. */
-function travelPlan(state, toId) {
-  const from = getLocation(state, state.location), to = getLocation(state, toId);
-  const dist = distance(from, to);
-  const w = state.weather?.today || {};
-  const night = isNight(state.clock.minutes);
-  let minutes = Math.max(1, dist) * 6 * (w.travel || 1) * (1 + movementPenalty(state)) * (overweightFactor(state) > 1 ? 1.25 : 1) * (night ? 1.15 : 1);
-  if (state.flags.includes('has_vehicle')) minutes *= 0.35;
-  minutes = clamp(Math.round(minutes), 15, 16 * 60);
-  const t = state.truth.threat || {};
-  let risk = (effectiveDanger(state, toId) * 5 + (state.threat.level || 0) * 5 + (t.baseLevel || 0) * 2 + dist * 0.15) * (w.encounter || 1) * diff(state).encounter;
-  if (night) risk *= Number(t.nightMultiplier) || 1.5;
-  risk -= skillCount(state, 'stealth') * 6 + skillCount(state, 'scavenging') * 2;
-  risk += withPlayer(state).length * 2;
-  if (state.flags.some(f => f.startsWith('lured_by'))) risk = 100;
-  return { distance: Math.round(dist), minutes, risk: clamp(Math.round(risk), 3, 100), to, from };
-}
-
-function rollTravel(state, toId, rnd = Math.random) {
-  const plan = travelPlan(state, toId);
-  const encounter = rnd() * 100 < plan.risk ? makeEncounter(state, plan.to, rnd, { ambush: plan.risk >= 100, context: 'travel' }) : null;
-  return { ...plan, encounter };
-}
-
-function makeEncounter(state, loc, rnd = Math.random, { ambush = false, context = 'travel' } = {}) {
-  const holder = holderOf(state, loc.id);
-  const humansWeight = clamp(0.35 + (holder ? 0.3 : 0) + (diff(state).hostility - 1) * 0.2, 0.1, 0.85);
-  const kind = rnd() < humansWeight ? 'humans' : 'threat';
-  const t = state.truth.threat || {};
-  const strength = clamp(Math.round((Number(t.baseLevel) || 1) + (state.threat.level || 0) * 0.8 + effectiveDanger(state, loc.id) * 0.6 + (isNight(state.clock.minutes) ? 1.5 : 0) + (ambush ? 2 : 0) + rnd() * 2), 1, 10);
-  const faction = kind === 'humans' && holder && rnd() < 0.7 ? holder : null;
-  const flavor = kind === 'threat' ? (t.name || 'the threat')
-    : faction ? `a ${faction.name} patrol`
-    : pick(['desperate scavengers', 'armed looters', 'a family on the road who may not be what they seem', 'a lone stranger with a story', 'men in mismatched uniforms demanding a toll'], rnd);
-  return { kind, strength, factionId: faction?.id || null, flavor, ambush, context, at: state.clock.minutes, locationId: loc.id, resolved: false };
-}
-
-function playerPower(state) {
-  const items = state.inventory.items;
-  let p = 1 + skillCount(state, 'combat') * 2 + weaponRating(items);
-  for (const id of withPlayer(state)) { const npc = getNpc(state, id); p += npc?.skills?.includes('combat') ? 1.5 : 0.5; }
-  p -= combatPenalty(state) * 4;
-  if (state.vitals.fatigue < 20) p -= 1.5;
-  if (state.vitals.health < 40) p -= 1;
-  if (state.vitals.hunger < 15) p -= 0.5;
-  return Math.max(0.5, p);
-}
-
-function classifyApproach(text) {
-  const t = String(text || '').toLowerCase();
-  if (/\b(fight|attack|shoot|open fire|swing|charge|strike|kill|stab|hit|punch|club|defend myself|stand and)\b/.test(t)) return 'fight';
-  if (/\b(run|flee|escape|sprint|bolt|retreat|get away|back off|get out|leave fast|drive off)\b/.test(t)) return 'flee';
-  if (/\b(hide|wait|crouch|duck|stay still|quiet|take cover|freeze|sneak|slip past|lie low)\b/.test(t)) return 'hide';
-  if (/\b(talk|negotiate|trade|offer|surrender|hands up|call out|greet|parley|bargain|plead|hail|reason|ask them|tell them|say)\b/.test(t)) return 'talk';
-  return 'improvise';
-}
-function encounterChoices(enc) {
-  return enc.kind === 'humans' ? ['Fight', 'Run', 'Hide', 'Talk to them'] : ['Fight', 'Run', 'Hide and wait'];
-}
-
-/** Resolve the current encounter with an approach. Mutates state; returns the result the GM narrates. */
-function resolveEncounter(state, approachIn, rnd = Math.random) {
-  const enc = state.encounter; if (!enc) return null;
-  const items = state.inventory.items;
-  const power = playerPower(state); const S = enc.strength;
-  const night = isNight(state.clock.minutes);
-  let approach = approachIn;
-  let note = '';
-  if (approach === 'improvise') approach = rnd() < 0.5 ? 'fight' : 'flee';
-  if (approach === 'talk' && enc.kind !== 'humans') { approach = 'fight'; note = 'The survivor tried to reason with something that does not reason; it came to a fight.'; }
-  const faction = enc.factionId ? (state.truth.factions || []).find(f => f.id === enc.factionId) : null;
-  const standing = faction ? state.factions[faction.id]?.standing || 0 : 0;
-  const hostility = faction ? hostilityMod(state, faction.id) : diff(state).hostility;
-  const res = { approach, outcome: '', injuries: [], itemsLost: [], companionCasualty: null, ammoUsed: 0, noise: 0, standingDelta: 0, moraleDelta: 0, gift: false, note, text: '' };
-
-  const fightChance = clamp(45 + (power - S) * 9 - (enc.ambush ? 15 : 0), 8, 92);
-  const fleeChance = clamp(55 + skillCount(state, 'stealth') * 8 - S * 5 - movementPenalty(state) * 40 - (state.vitals.fatigue < 25 ? 15 : 0) - (enc.ambush ? 15 : 0), 8, 92);
-  const hideChance = clamp(50 + skillCount(state, 'stealth') * 12 - withPlayer(state).length * 6 + (night ? 10 : 0) - (enc.ambush ? 30 : 0), 5, 90);
-  const talkChance = clamp(40 + skillCount(state, 'negotiation') * 12 + standing / 4 - (hostility - 1) * 35 - (enc.ambush ? 10 : 0), 5, 90);
-  const roll = rnd() * 100;
-
-  const hurt = sev => {
-    const type = enc.kind === 'threat' ? pick(['bite', 'laceration', 'bruise', 'puncture'], rnd) : pick(['gunshot', 'cut', 'bruise', 'fracture'], rnd);
-    const region = pick(['leftArm', 'rightArm', 'leftLeg', 'rightLeg', 'torso', 'abdomen', 'leftHand', 'rightHand', 'head'], rnd);
-    const inj = addInjury(state, { region, type, severity: sev }, rnd);
-    res.injuries.push({ region: inj.region, type: inj.type, severity: inj.severity });
-  };
-  const dropItems = (n, protectWeapons = true) => {
-    const cands = items.filter(x => !(protectWeapons && x.category === 'weapon')).sort(() => rnd() - 0.5).slice(0, n);
-    for (const c of cands) { removeItem(items, c.id, 1); res.itemsLost.push(c.name); }
-  };
-  const casualty = p => {
-    const ids = withPlayer(state); if (!ids.length || rnd() >= p) return;
-    const id = pick(ids, rnd); const npc = getNpc(state, id);
-    if (rnd() < 0.45) { lose(state, id, 'died'); res.companionCasualty = { id, name: npc?.name || id, how: 'died' }; }
-    else { state.companions[id].hurt = (state.companions[id].hurt || 0) + 1; adjustLoyalty(state, id, -5); res.companionCasualty = { id, name: npc?.name || id, how: 'hurt' }; }
-  };
-  const useAmmo = () => { if (weaponRating(items) >= 3) { res.ammoUsed = spendAmmo(items, 2 + Math.floor(rnd() * 5)); res.noise += 2; } else res.noise += 1; };
-
-  state.stats.encounters++;
-  if (approach === 'fight') {
-    useAmmo();
-    if (roll < fightChance * 0.55) { res.outcome = 'won'; state.stats.kills++; res.moraleDelta = 5; }
-    else if (roll < fightChance) { res.outcome = 'won_hurt'; hurt(1 + (rnd() < 0.4 ? 1 : 0)); state.stats.kills++; res.moraleDelta = 1; }
-    else if (roll < fightChance + 25) { res.outcome = 'lost'; hurt(2); dropItems(1); casualty(0.3); res.moraleDelta = -8; }
-    else { res.outcome = 'lost_badly'; hurt(2); hurt(1 + (rnd() < 0.5 ? 1 : 0)); dropItems(2, false); casualty(0.5); res.moraleDelta = -15; }
-    if (faction) res.standingDelta = -15;
-  } else if (approach === 'flee') {
-    if (roll < fleeChance) { res.outcome = 'escaped'; }
-    else { res.outcome = 'escaped_hurt'; hurt(1 + (rnd() < 0.3 ? 1 : 0)); if (rnd() < 0.4) dropItems(1); res.moraleDelta = -4; }
-    if (faction) res.standingDelta = -3;
-  } else if (approach === 'hide') {
-    if (roll < hideChance) { res.outcome = 'hid'; }
-    else { res.outcome = 'ambushed'; hurt(2); dropItems(1); casualty(0.25); res.moraleDelta = -8; res.noise += 1; }
-  } else if (approach === 'talk') {
-    if (roll < talkChance) { res.outcome = 'talked'; res.standingDelta = faction ? 8 : 0; res.moraleDelta = 3; res.gift = rnd() < 0.4; }
-    else { res.outcome = 'talk_failed'; if (rnd() < 0.5) { hurt(1); dropItems(1); } else dropItems(2); res.standingDelta = faction ? -5 : 0; res.moraleDelta = -5; }
-  }
-  state.vitals.morale = clamp(state.vitals.morale + res.moraleDelta);
-  if (faction && res.standingDelta) adjustStanding(state, faction.id, res.standingDelta);
-  if (res.noise) {
-    state.threat.local[enc.locationId] = clamp((state.threat.local[enc.locationId] || 0) + res.noise, 0, 5);
-    if (state.shelter?.locationId === enc.locationId) state.shelter.noise = Math.min(5, state.shelter.noise + 1);
-  }
-  enc.resolved = true; enc.result = res;
-  state.encounter = null;
-  state.flags = state.flags.filter(f => !f.startsWith('lured_by'));
-  res.text = summarize(res, enc);
-  return res;
-}
-
-function summarize(res, enc) {
-  const parts = [`Against ${enc.flavor} (strength ${enc.strength}/10) the survivor chose to ${res.approach.toUpperCase()}; outcome: ${res.outcome.replace(/_/g, ' ').toUpperCase()}.`];
-  if (res.injuries.length) parts.push(`Survivor injured: ${res.injuries.map(i => `${i.type} to the ${REGION_LABEL[i.region].toLowerCase()} (severity ${i.severity})`).join('; ')}.`);
-  else parts.push('Survivor unhurt.');
-  if (res.ammoUsed) parts.push(`Ammunition spent: ${res.ammoUsed}.`);
-  if (res.itemsLost.length) parts.push(`Items lost or dropped: ${res.itemsLost.join(', ')}.`);
-  if (res.companionCasualty) parts.push(`Companion ${res.companionCasualty.name} ${res.companionCasualty.how === 'died' ? 'was KILLED' : 'was hurt'}.`);
-  if (res.standingDelta) parts.push(`Faction standing ${res.standingDelta > 0 ? '+' : ''}${res.standingDelta}.`);
-  if (res.gift) parts.push('They parted on good terms; a small gift or useful information changes hands (you may add ONE modest item or a fact).');
-  if (res.noise) parts.push('It was loud; the area is more dangerous now.');
-  if (res.note) parts.push(res.note);
-  return parts.join(' ');
-}
-
-// ---------------------------------------------------------------- scavenging
-const RES_TO_CAT = { food: 'food', water: 'water', medical: 'medical', fuel: 'fuel', materials: 'material', weapons: 'weapon' };
-
-/** What a search of an area can yield; decided before the GM speaks. */
-function scavengeBudget(state, locationId, area, rnd = Math.random) {
-  const loc = getLocation(state, locationId); const ls = locState(state, locationId); const d = diff(state);
-  const res = ls.resources; const total = Object.values(res).reduce((a, b) => a + b, 0);
-  const skill = skillCount(state, 'scavenging'); const w = state.weather?.today || {};
-  const areaKey = String(area || 'general').toLowerCase().trim();
-  const repeat = ls.searched.filter(a => a === areaKey).length;
-  const night = isNight(state.clock.minutes);
-  let roll = rnd() * 100 + skill * 10 + Math.min(20, total * 2) * d.scarcity * (w.scavenge || 1) - repeat * 25 - (night ? 10 : 0);
-  if ((loc.sharpEyeDetails || []).some(s => overlap(s, areaKey) > 0)) roll += 10;
-  let count = roll < 30 ? 0 : roll < 60 ? 1 : roll < 88 ? 2 : 3;
-  if (total === 0) count = 0;
-  const pool = Object.entries(res).filter(([, v]) => v > 0).flatMap(([k, v]) => Array(k === 'weapons' ? Math.ceil(v / 2) : v).fill(RES_TO_CAT[k]));
-  const categories = [];
-  for (let i = 0; i < count && pool.length; i++) categories.push(pick(pool, rnd));
-  const quality = roll > 95 ? 'good' : roll > 60 ? 'fair' : 'poor';
-  let hiddenIndex = null;
-  const hidden = (loc.hidden || []).map((hh, i) => ({ ...hh, i })).filter(hh => !ls.hiddenFound.includes(hh.i));
-  for (const hh of hidden) { if (overlap(hh.where, areaKey) > 0 && rnd() < 0.85) { hiddenIndex = hh.i; break; } }
-  if (hiddenIndex === null && hidden.length && roll > 85 && rnd() < 0.3) hiddenIndex = hidden[0].i;
-  const dangerChance = (effectiveDanger(state, locationId) * 5 + (state.threat.level || 0) * 2 + (night ? 12 : 0)) * d.encounter;
-  const disturbance = rnd() * 100 < dangerChance ? makeEncounter(state, loc, rnd, { context: 'search' }) : null;
-  const minutes = 45 + Math.round(rnd() * 30) + categories.length * 10;
-  ls.searched.push(areaKey);
-  return { count: categories.length, categories, quality, hiddenIndex, minutes, disturbance, suggestions: categories.map(c => genericItem(c, rnd, quality).name) };
-}
-function applyDepletion(state, locationId, categories, rnd = Math.random) {
-  const ls = locState(state, locationId);
-  for (const c of categories) {
-    const k = Object.keys(RES_TO_CAT).find(key => RES_TO_CAT[key] === c);
-    if (k && ls.resources[k] > 0 && rnd() < 0.6) ls.resources[k]--;
-  }
-}
-
-return { distance, travelPlan, rollTravel, makeEncounter, playerPower, classifyApproach, encounterChoices, resolveEncounter, scavengeBudget, applyDepletion };
 })();
 
 // ---- js/ui/mapView.js ----
@@ -3609,6 +3619,7 @@ function registerHelp(app, { reg }) {
           h('li', {}, 'Everything that happened on day 3 is still happening on day 20. Watch the EVENT lines.'),
           h('li', {}, 'You can type anything at the SURVIVOR> prompt. The world answers in its own terms.')),
         h('h3', {}, 'Command bar'),
+        h('p', { class: 'small' }, 'Type anything. The world attempts exactly what you describe, and what is impossible fails in its own way. The shortcuts below are optional conveniences that fire only when their target is real (a place you know, an item you carry, a person you have met); anything else goes to the Game Master as written. Start a line with / to force a shortcut.'),
         h('table', { class: 'small' }, h('tbody', {}, [
           ['go <place>', 'travel to a known place'], ['look', 'look around where you are'], ['search <area>', 'search a specific spot here'],
           ['rest [hours]', 'sleep (6h default)'], ['wait [hours]', 'let time pass'], ['skip', 'skip ahead to the next development'],
@@ -4570,7 +4581,7 @@ TRADE: barter in character using the faction's tradeGoods and wants; list items 
 
 HINT: only when asked. Give ONE vague, in-character nudge (a thought, a memory, a companion's remark, a radio fragment) toward the next useful step. Never name the solution, the cause, or the window. Set hintGiven true; the game makes it cost.
 
-FREE ACTION / CHOICE: resolve what the survivor does in the world's terms. If they try something impossible, do not refuse it: show the world's real resistance. Set timeMinutes for how long it took (0-240). Bad decisions have realistic consequences, usually later: travelling at night, drinking untreated water, splitting the group, trusting the wrong people, making noise, sharing food you cannot spare.
+FREE ACTION / CHOICE: THE WORLD IS OPEN. Whatever the survivor describes, they attempt, exactly as described: opening a door, waving at a stranger, lying about where they were, climbing a fence, hiding under a truck, cooking, praying, breaking a window, siphoning fuel, hot-wiring a car, shouting a name into the dark. Resolve it by the world's physics, the people present and the state. Something impossible or foolish is not refused and not answered with a menu: it fails, costs, or backfires in a believable way, and the survivor learns something from how it fails. Something said to a person present gets an answer in that person's voice. Set timeMinutes for how long it took (0-240). If they sleep or rest in a free action, set "resting": true and timeMinutes up to 720; the game recovers their fatigue. If they set out for a KNOWN location, set "moveTo" to its id and the game applies the travel time and arrival. If they search or forage in prose, award at most two modest items that fit the place and how picked-over it is. Bad decisions have realistic consequences, usually later: travelling at night, drinking untreated water, splitting the group, trusting the wrong people, making noise, sharing food you cannot spare.
 
 END MY STORY: a quiet final scene. No choices.
 
@@ -4622,6 +4633,8 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary b
     "cluesFound": ["clueId"],
     "flags": ["snake_case_flag"],
     "threatDelta": 0,
+    "moveTo": "locationId (free actions only: the survivor travelled to a known place)",
+    "resting": false,
     "shelter": { "claim": "locationId" },
     "hintGiven": false,
     "death": { "cause": "one line" },
@@ -4639,6 +4652,7 @@ Rules for the changes block:
 - "cluesFound": only when the survivor has genuinely learned that clue in this turn, through the source the truth names.
 - "flags": set a requirement flag from ending.trueWayOut.requirements ONLY when the survivor has done exactly what howToObtain describes; set "pursued_<falseHopeId>" when they commit to a false hope; otherwise use flags sparingly as memory of consequential promises or choices.
 - "threatDelta" -1..1 only when the survivor's own conduct this turn changed how hunted they are.
+- "moveTo" only in a free action in which the survivor actually travels to a known location; the game moves them and charges the travel time. "resting" only when the survivor sleeps or rests in a free action.
 - "shelter.claim" only when the survivor clearly decides to make the place they are standing in their base.
 - "death" only when the ACTION says DEATH POSSIBLE THIS TURN: yes, and the fiction has earned it.
 - "escape" only when the ACTION says ENDING CONDITIONS ARE MET and the survivor takes the way out.
@@ -4799,7 +4813,7 @@ function preResolve(state, action) {
       break;
     }
     case 'rest': {
-      const hours = clamp(num(action.hours, 6), 1, 10);
+      const hours = clamp(num(action.hours, 6), 1, 12);
       pre.hours = hours; pre.minutes = hours * 60; pre.tickCtx = { sleeping: true, camp: !!action.camp };
       if (!atShelter(state)) {
         const risk = (effectiveDanger(state, state.location) * 4 + state.threat.level * 4 + (isNight(state.clock.minutes) ? 10 : 0)) * d.encounter - skillCount(state, 'stealth') * 5 - (isGuarding(state) ? 10 : 0);
@@ -4913,7 +4927,7 @@ function describeAction(state, action, pre, events, notices) {
     case 'talk': {
       const npc = getNpc(state, action.npcId); const c = companion(state, action.npcId);
       lines.push(`[ACTION: TALK to npc=${npc.id} ("${npc.name}" · ${c.status === 'with' ? 'companion' : c.status === 'away' ? 'AWAY on a task, reachable only if plausible' : 'present at this place'} · loyalty ${c.loyalty} (${loyaltyLabel(c.loyalty)}) · mood ${c.mood}${c.hurt ? ' · hurt' : ''}${c.hungryDays ? ` · ${c.hungryDays} day(s) hungry` : ''})]`);
-      lines.push(`Survivor says: "${words}"`);
+      lines.push(action.indirect ? `What follows is what the survivor does and says to them, in the survivor's own words.\nSurvivor: ${words}` : `Survivor says: "${words}"`);
       lines.push('Answer in their voice (speaker "npc:<id>"). They remember everything in their said-log and what the survivor has done. Set npcMood and loyaltyDelta (-3..3) honestly. If the survivor asks them to come along and they would, set companionsRecruited. If they know a clue (ending.clues with source.kind "npc" and their id) and the conversation earns it, let it come out naturally and set cluesFound.');
       break;
     }
@@ -4956,7 +4970,7 @@ function describeAction(state, action, pre, events, notices) {
     case 'use': lines.push(`[ACTION: USE "${action.itemName}"] Survivor: ${words || `I use the ${action.itemName}.`} Narrate the attempt; set changes only as the truth allows. If it is consumed, list it in itemsLost.`); break;
     case 'end': lines.push('[ACTION: END MY STORY] The survivor chooses to stop here. Narrate a final, quiet closing scene of 80-150 words in the present tense. No choices.'); break;
     case 'choice': lines.push(`[ACTION: CHOICE] The survivor chose: "${words}". Resolve it in the world's terms. Set timeMinutes (0-240) for how long it took.`); break;
-    default: lines.push(`[ACTION: FREE] Survivor: ${words}. Resolve it in the world's terms. If it is an attempt at something impossible, show the world's real resistance. Set timeMinutes (0-240).`);
+    default: lines.push(`[ACTION: FREE] Survivor: ${words}\nThe world is open: the survivor attempts exactly this, and you resolve it by the world's physics, the people present and the state. Impossible or foolish things fail, cost or backfire believably; they are never refused and never answered with a menu. Set timeMinutes for how long it took (0-240; up to 720 with "resting": true if they sleep or rest). If they set out for a KNOWN location, set "moveTo" to its id and the game applies the travel time. If they search or forage in prose, award at most two modest items that fit this place.`);
   }
   if (action.type !== 'end') {
     if (endingAvailable(state)) lines.push('NOTE: ENDING CONDITIONS ARE MET here and now. If the survivor takes the way out, set "escape": true and narrate the departure without revealing the hidden cause (the debrief will).');
@@ -5034,10 +5048,12 @@ async function runTurn({ state, action, provider, apiKey, model, baseUrl, onNarr
   }
   onNarrative?.(parsed.narrative);
 
-  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible };
+  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime };
   const notices = applyChanges(state, parsed.changes || {}, ctx);
-  const extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, 240) : 0;
-  const noticesAfter = extra ? advanceTime(state, extra) : [];
+  const resting = pre.allowGmTime && parsed.changes?.resting === true;
+  let extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, resting ? 720 : 240) : 0;
+  if (ctx.travelMinutes) extra = Math.max(extra, ctx.travelMinutes);
+  const noticesAfter = extra ? advanceTime(state, extra, resting ? { sleeping: true, camp: !atShelter(state) } : ctx.travelMinutes ? { exertion: true } : {}) : [];
 
   state.lastChoices = asArray(parsed.choices).filter(c => typeof c === 'string' && c.trim()).slice(0, 4).map(c => c.trim().slice(0, 140));
   if (state.encounter && !state.encounter.resolved) state.lastChoices = encounterChoices(state.encounter);
@@ -5237,15 +5253,17 @@ const { generateWorld } = __m["js/engine/worldGenerator.js"];
 const { runTurn } = __m["js/engine/gm.js"];
 const { runDebrief, finalizeDebrief, fallbackDebrief, computeStats } = __m["js/engine/ending.js"];
 const { newGameState, addLog, advanceTime, checkEnd, DOOM_LABEL } = __m["js/engine/state.js"];
-const { formatTime, phaseOf, daysLeft, dayOf, isNight, MIN_PER_DAY } = __m["js/engine/clock.js"];
+const { formatTime, phaseOf, daysLeft, dayOf, isNight, hourOf, MIN_PER_DAY } = __m["js/engine/clock.js"];
 const { APOCALYPSES, apocalypseById, randomApocalypse } = __m["js/engine/apocalypses.js"];
 const { BACKGROUNDS, useItem, craft, removeItem, findItem, totalWeight, maxWeight, supplyDays, RECIPES } = __m["js/engine/inventory.js"];
 const { deposit, withdraw, recoverCache } = __m["js/engine/shelter.js"];
 const { clearGuard, withPlayer, loyaltyLabel, TASKS } = __m["js/engine/companions.js"];
 const { getLocation, getNpc, getFaction, fuzzyFind } = __m["js/engine/world.js"];
+const { holderOf } = __m["js/engine/factions.js"];
 const { conditions, describeInjuries } = __m["js/engine/body.js"];
 const store = __m["js/engine/storage.js"];
 // Main controller: screens, API config, the turn loop, code-only actions, the command bar, save/load, the debrief.
+
 
 
 
@@ -5612,7 +5630,7 @@ class App {
       case 'search': return `Searches ${a.area}.`;
       case 'rest': return `${a.camp ? 'Makes camp and rests' : 'Rests'} for ${a.hours || 6} hours.`;
       case 'wait': return `Waits ${a.hours || 1} hour${(a.hours || 1) === 1 ? '' : 's'}.`;
-      case 'talk': return `To ${npc(a.npcId)}: "${a.text}"`;
+      case 'talk': return a.indirect ? a.text : `To ${npc(a.npcId)}: "${a.text}"`;
       case 'give': return `Gives ${findItem(s.inventory.items, a.itemId)?.name || 'something'} to ${npc(a.npcId)}.`;
       case 'tune': return `Tunes the radio to ${a.freq}.`;
       case 'scan': return 'Scans the bands.';
@@ -5660,7 +5678,7 @@ class App {
   search(area) { return this.act({ type: 'search', area }); }
   rest(hours = 6, camp = false) { return this.act({ type: 'rest', hours, camp }); }
   wait(hours = 1) { return this.act({ type: 'wait', hours }); }
-  talk(npcId, text) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim() }); }
+  talk(npcId, text, indirect = false) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim(), indirect }); }
   give(itemId, npcId) { return this.act({ type: 'give', itemId, npcId }); }
   tune(freq) { return this.act({ type: 'tune', freq }); }
   scan() { return this.act({ type: 'scan' }); }
@@ -5742,62 +5760,76 @@ class App {
   }
 
   // ----------------------------------------------------------- command bar
+  /**
+   * The world is open: anything typed goes to the Game Master as a free action
+   * unless it is unmistakably one of the shortcuts in parseCommand (a leading
+   * slash forces a shortcut). A shortcut only fires when its target resolves.
+   */
   handleCommand(line) {
     const s = this.state; if (!s) return;
     if (s.ended) { toast('This record is closed.', 'warn'); return; }
-    const [cmd, ...rest] = line.split(/\s+/);
-    const arg = rest.join(' ').trim();
-    const c = cmd.toLowerCase();
-    const bad = m => toast(m, 'warn');
+    if (s.encounter && !s.encounter.resolved) return this.act({ type: 'encounter', text: line });
+    const forced = line.startsWith('/');
+    const text = forced ? line.slice(1).trim() : line.trim();
+    if (!text) return;
+    const action = this.parseCommand(text);
+    if (action) return action();
+    if (forced) { toast(`No shortcut "${text}". Type it without the slash to act on it.`, 'warn'); return; }
+    return this.free(text);
+  }
+
+  /** Returns a function to run, or null when the line should go to the GM as written. */
+  parseCommand(text) {
+    const s = this.state;
+    const low = text.toLowerCase().replace(/[.!?]+$/, '').trim();
     const known = () => s.discovered.locations.map(id => getLocation(s, id)).filter(Boolean);
     const findLoc = q => fuzzyFind(known(), q);
     const findNpc = q => fuzzyFind(s.npcsMet.map(id => getNpc(s, id)).filter(Boolean), q);
-    if (s.encounter && !s.encounter.resolved) return this.act({ type: 'encounter', text: line });
-    switch (c) {
-      case 'help': case '?': return this.wm.show('help');
-      case 'open': case 'show': { const id = DOCK_ORDER.find(x => x !== '---' && (x === arg.toLowerCase() || this.wm.defs.get(x)?.title.toLowerCase().startsWith(arg.toLowerCase()))); return id ? this.wm.show(id) : bad(`No panel "${arg}".`); }
-      case 'go': case 'travel': case 'goto': case 'walk': { const l = findLoc(arg); if (l) return this.travel(l.id); break; }
-      case 'look': case 'l': return this.look();
-      case 'search': case 'scavenge': case 'loot': return arg ? this.search(arg) : bad('search <area>');
-      case 'rest': case 'sleep': return this.rest(parseFloat(arg) || 6);
-      case 'camp': return this.rest(parseFloat(arg) || 8, true);
-      case 'wait': return this.wait(parseFloat(arg) || 1);
-      case 'skip': return this.skipAhead();
-      case 'eat': case 'drink': case 'use': case 'take': { const it = findItem(s.inventory.items, arg); if (it) return this.useItem(it.id); break; }
-      case 'craft': case 'make': { const r = RECIPES.find(x => x.id === arg.toLowerCase() || x.name.toLowerCase().startsWith(arg.toLowerCase())); return r ? this.craft(r.id) : bad('craft <recipe>; the Inventory panel lists them.'); }
-      case 'drop': { const it = findItem(s.inventory.items, arg); if (it) return this.dropItem(it.id); break; }
-      case 'give': { const m = arg.match(/^(.+?)\s+to\s+(.+)$/i); if (!m) break; const it = findItem(s.inventory.items, m[1]); const n = findNpc(m[2]); if (it && n && s.companions[n.id]?.status === 'with') return this.give(it.id, n.id); if (it && n) return bad('They are not with you.'); break; }
-      case 'talk': case 'say': case 'ask': case 'tell': {
-        const m = arg.match(/^(?:to\s+)?(\S+)\s*(.*)$/); if (!m) break;
-        const n = findNpc(m[1]); if (!n) break;
-        if (!m[2]) { this.selected.npc = n.id; return this.wm.show('companions'); }
-        return this.talk(n.id, m[2]);
-      }
-      case 'assign': case 'send': {
-        const m = arg.match(/^(\S+)\s+(scout|scavenge|hunt|guard)(?:\s+(?:to\s+|at\s+)?(.+))?$/i); if (!m) return bad('assign <name> scout|scavenge|hunt|guard [place]');
-        const n = findNpc(m[1]); if (!n) return bad('Unknown person.');
-        const l = m[3] ? findLoc(m[3]) : null; if (m[3] && !l) return bad(`Unknown place "${m[3]}".`);
-        return this.assign(n.id, m[2].toLowerCase(), l?.id || null);
-      }
-      case 'tune': case 'radio': return arg ? this.tune(arg) : this.wm.show('radio');
-      case 'scan': return this.scan();
-      case 'listen': return this.wm.show('radio');
-      case 'claim': case 'settle': return this.claim();
-      case 'fortify': case 'barricade': return this.fortify();
-      case 'abandon': return this.abandon();
-      case 'trade': case 'barter': return this.trade(arg || 'What do you have to trade?');
-      case 'stock': case 'status': return this.takeStock();
-      case 'inventory': case 'inv': case 'i': return this.wm.show('inventory');
-      case 'map': case 'm': return this.wm.show('map');
-      case 'tile': return this.wm.tile();
-      case 'hint': return this.hint(arg);
-      case 'note': case 'n': { if (!arg) return this.wm.show('journal'); s.journal = (s.journal ? s.journal + '\n' : '') + arg; this.autosave(); this.wm.refresh('journal'); return toast('Note added.'); }
-      case 'save': return this.wm.show('settings');
-      case 'export': return store.exportState(s);
-      case 'end': if (!arg || /story|game|it/i.test(arg)) return this.endStory(); break;
-      default: break;
-    }
-    return this.free(line);
+    const items = s.inventory.items;
+    const UNTIL = '(morning|dawn|daylight|sunrise|first light|noon|midday|evening|dusk|sunset|dark|night|nightfall)';
+    let m;
+    const whole = {
+      'help': () => this.wm.show('help'), '?': () => this.wm.show('help'), 'commands': () => this.wm.show('help'),
+      'map': () => this.wm.show('map'), 'inventory': () => this.wm.show('inventory'), 'inv': () => this.wm.show('inventory'), 'i': () => this.wm.show('inventory'), 'pack': () => this.wm.show('inventory'),
+      'stock': () => this.takeStock(), 'take stock': () => this.takeStock(), 'status': () => this.takeStock(),
+      'save': () => this.wm.show('settings'), 'export': () => store.exportState(s), 'tile': () => this.wm.tile(),
+      'look': () => this.look(), 'look around': () => this.look(), 'l': () => this.look(),
+      'skip': () => this.skipAhead(), 'skip ahead': () => this.skipAhead(),
+      'scan': () => this.scan(), 'listen': () => this.scan(), 'radio': () => this.wm.show('radio'),
+      'claim': () => this.claim(), 'settle': () => this.claim(), 'claim shelter': () => this.claim(), 'settle here': () => this.claim(),
+      'fortify': () => this.fortify(), 'barricade': () => this.fortify(), 'abandon': () => this.abandon(), 'abandon shelter': () => this.abandon(),
+      'hint': () => this.hint(), 'end my story': () => this.endStory(), 'end story': () => this.endStory()
+    };
+    if (whole[low]) return whole[low];
+    if ((m = low.match(/^(?:open|show)\s+(?:me\s+)?(?:the\s+)?(\w+)\s*(?:panel|window)?$/))) { const id = DOCK_ORDER.find(x => x !== '---' && x !== 'tile' && (x === m[1] || this.wm.defs.get(x)?.title.toLowerCase().startsWith(m[1]))); return id ? () => this.wm.show(id) : null; }
+    if ((m = low.match(/^(?:go|travel|goto|walk|head|move|set out|make my way)\s+(?:to\s+|towards?\s+|for\s+|over to\s+)?(?:the\s+)?(.+)$/))) { const l = findLoc(m[1]); return l ? () => this.travel(l.id) : null; }
+    if ((m = low.match(/^(?:i\s+)?(?:search|scavenge|loot|ransack|rummage(?:\s+(?:through|in|around))?|dig\s+through|pick\s+through|comb\s+through)\s+(?:the\s+)?(.+)$/))) { const area = m[1]; if (findNpc(area) || area.split(/\s+/).length > 5 || /,|\b(?:and|then|while|but|for|before|after)\b/.test(area)) return null; return () => this.search(area); }
+    if ((m = low.match(new RegExp(`^(?:rest|sleep|nap|lie\\s+down|bed\\s+down|turn\\s+in|get\\s+some\\s+sleep|get\\s+some\\s+rest)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : (/^nap/.test(low) ? 2 : 6); if (hours == null) return null; return () => this.rest(hours); }
+    if ((m = low.match(new RegExp(`^(?:wait|pass\\s+the\\s+time|kill\\s+time|hold\\s+here)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : 1; if (hours == null) return null; return () => this.wait(hours); }
+    if ((m = low.match(/^(?:eat|drink|use|take|consume|swallow|apply)\s+(?:the\s+|some\s+|a\s+|an\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.useItem(it.id) : null; }
+    if ((m = low.match(/^(?:drop|discard|ditch|throw\s+away|dump)\s+(?:the\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.dropItem(it.id) : null; }
+    if ((m = low.match(/^(?:craft|make|build)\s+(?:a\s+|an\s+|some\s+)?(.+)$/))) { const r = RECIPES.find(x => x.id === m[1] || x.name.toLowerCase().startsWith(m[1]) || x.makes.name.toLowerCase().startsWith(m[1])); return r ? () => this.craft(r.id) : null; }
+    if ((m = low.match(/^(?:give|hand|pass)\s+(?:the\s+|my\s+|some\s+|a\s+)?(.+?)\s+to\s+(.+)$/))) { const it = findItem(items, m[1]); const n = findNpc(m[2]); return it && n && s.companions[n.id]?.status === 'with' ? () => this.give(it.id, n.id) : null; }
+    if ((m = low.match(/^(?:talk|speak|say|ask|tell)\s+(?:to\s+|with\s+)?(?:the\s+)?(\S+)\s*(.*)$/))) { const n = findNpc(m[1]); if (!n) return null; return m[2].trim() ? () => this.talk(n.id, text, true) : () => { this.selected.npc = n.id; this.wm.show('companions'); }; }
+    if ((m = low.match(/^(?:assign|send)\s+(\S+)\s+(?:to\s+)?(scout|scavenge|hunt|guard)(?:\s+(?:to\s+|at\s+)?(?:the\s+)?(.+))?$/))) { const n = findNpc(m[1]); if (!n) return null; const l = m[3] ? findLoc(m[3]) : null; if (m[3] && !l) return null; return () => this.assign(n.id, m[2], l?.id || null); }
+    if ((m = low.match(/^(?:tune|dial|radio|tune\s+(?:the\s+)?radio|set\s+(?:the\s+)?radio|switch\s+(?:the\s+)?radio)\s+(?:to\s+|in\s+to\s+|into\s+)?(\d+(?:[.,]\d+)?)/))) return () => this.tune(m[1]);
+    if (/^(?:listen\s+to|turn\s+on|check|try|switch\s+on|scan|work)\s+(?:the\s+)?radio\b/.test(low) || /^scan\s+(?:the\s+)?(?:bands?|frequencies|airwaves|dial)$/.test(low)) return () => this.scan();
+    if ((m = low.match(/^(?:trade|barter)\b\s*(.*)$/))) { const f = holderOf(s, s.location); return f && !(m[1] && findNpc(m[1])) ? () => this.trade(m[1] || 'What do you have to trade?') : null; }
+    if (/^(?:hint|give\s+me\s+a\s+hint|any\s+hints?|what\s+should\s+i\s+do(?:\s+next)?)\b/.test(low)) return () => this.hint(text);
+    if ((m = low.match(/^(?:note|journal)\s+(.+)$/))) return () => { s.journal = (s.journal ? s.journal + '\n' : '') + text.replace(/^\S+\s+/, ''); this.autosave(); this.wm.refresh('journal'); toast('Note added.'); };
+    return null;
+  }
+
+  /**
+   * Hours from now until a named time of day, at least one. Returns null when the
+   * target is more than twelve hours away ("sleep until morning" at 10:00): that is
+   * not a rest the clock can simply skip, so the line goes to the GM as a free action.
+   */
+  hoursUntil(word) {
+    const h = hourOf(this.state.clock.minutes);
+    const target = { morning: 7, dawn: 6, daylight: 7, sunrise: 6, 'first light': 6, noon: 12, midday: 12, evening: 18, dusk: 19, sunset: 19, dark: 21, night: 21, nightfall: 21 }[word] ?? 7;
+    let d = target - h; if (d <= 0) d += 24;
+    return d > 12 ? null : Math.max(1, d);
   }
 
   // ---------------------------------------------------------------- ending

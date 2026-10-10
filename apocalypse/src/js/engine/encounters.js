@@ -81,7 +81,6 @@ export function resolveEncounter(state, approachIn, rnd = Math.random) {
   const night = isNight(state.clock.minutes);
   let approach = approachIn;
   let note = '';
-  if (approach === 'improvise') approach = rnd() < 0.5 ? 'fight' : 'flee';
   if (approach === 'talk' && enc.kind !== 'humans') { approach = 'fight'; note = 'The survivor tried to reason with something that does not reason; it came to a fight.'; }
   const faction = enc.factionId ? (state.truth.factions || []).find(f => f.id === enc.factionId) : null;
   const standing = faction ? state.factions[faction.id]?.standing || 0 : 0;
@@ -92,6 +91,7 @@ export function resolveEncounter(state, approachIn, rnd = Math.random) {
   const fleeChance = clamp(55 + skillCount(state, 'stealth') * 8 - S * 5 - movementPenalty(state) * 40 - (state.vitals.fatigue < 25 ? 15 : 0) - (enc.ambush ? 15 : 0), 8, 92);
   const hideChance = clamp(50 + skillCount(state, 'stealth') * 12 - withPlayer(state).length * 6 + (night ? 10 : 0) - (enc.ambush ? 30 : 0), 5, 90);
   const talkChance = clamp(40 + skillCount(state, 'negotiation') * 12 + standing / 4 - (hostility - 1) * 35 - (enc.ambush ? 10 : 0), 5, 90);
+  if (approach === 'improvise') { approach = fightChance >= fleeChance ? 'fight' : 'flee'; note = `The survivor improvised something of their own; the game resolved it with the odds of ${approach === 'fight' ? 'fighting' : 'getting away'}. Narrate THEIR idea, with this outcome.`; }
   const roll = rnd() * 100;
 
   const hurt = sev => {

@@ -112,7 +112,7 @@ function preResolve(state, action) {
       break;
     }
     case 'rest': {
-      const hours = clamp(num(action.hours, 6), 1, 10);
+      const hours = clamp(num(action.hours, 6), 1, 12);
       pre.hours = hours; pre.minutes = hours * 60; pre.tickCtx = { sleeping: true, camp: !!action.camp };
       if (!atShelter(state)) {
         const risk = (effectiveDanger(state, state.location) * 4 + state.threat.level * 4 + (isNight(state.clock.minutes) ? 10 : 0)) * d.encounter - skillCount(state, 'stealth') * 5 - (isGuarding(state) ? 10 : 0);
@@ -226,7 +226,7 @@ export function describeAction(state, action, pre, events, notices) {
     case 'talk': {
       const npc = getNpc(state, action.npcId); const c = companion(state, action.npcId);
       lines.push(`[ACTION: TALK to npc=${npc.id} ("${npc.name}" · ${c.status === 'with' ? 'companion' : c.status === 'away' ? 'AWAY on a task, reachable only if plausible' : 'present at this place'} · loyalty ${c.loyalty} (${loyaltyLabel(c.loyalty)}) · mood ${c.mood}${c.hurt ? ' · hurt' : ''}${c.hungryDays ? ` · ${c.hungryDays} day(s) hungry` : ''})]`);
-      lines.push(`Survivor says: "${words}"`);
+      lines.push(action.indirect ? `What follows is what the survivor does and says to them, in the survivor's own words.\nSurvivor: ${words}` : `Survivor says: "${words}"`);
       lines.push('Answer in their voice (speaker "npc:<id>"). They remember everything in their said-log and what the survivor has done. Set npcMood and loyaltyDelta (-3..3) honestly. If the survivor asks them to come along and they would, set companionsRecruited. If they know a clue (ending.clues with source.kind "npc" and their id) and the conversation earns it, let it come out naturally and set cluesFound.');
       break;
     }
@@ -269,7 +269,7 @@ export function describeAction(state, action, pre, events, notices) {
     case 'use': lines.push(`[ACTION: USE "${action.itemName}"] Survivor: ${words || `I use the ${action.itemName}.`} Narrate the attempt; set changes only as the truth allows. If it is consumed, list it in itemsLost.`); break;
     case 'end': lines.push('[ACTION: END MY STORY] The survivor chooses to stop here. Narrate a final, quiet closing scene of 80-150 words in the present tense. No choices.'); break;
     case 'choice': lines.push(`[ACTION: CHOICE] The survivor chose: "${words}". Resolve it in the world's terms. Set timeMinutes (0-240) for how long it took.`); break;
-    default: lines.push(`[ACTION: FREE] Survivor: ${words}. Resolve it in the world's terms. If it is an attempt at something impossible, show the world's real resistance. Set timeMinutes (0-240).`);
+    default: lines.push(`[ACTION: FREE] Survivor: ${words}\nThe world is open: the survivor attempts exactly this, and you resolve it by the world's physics, the people present and the state. Impossible or foolish things fail, cost or backfire believably; they are never refused and never answered with a menu. Set timeMinutes for how long it took (0-240; up to 720 with "resting": true if they sleep or rest). If they set out for a KNOWN location, set "moveTo" to its id and the game applies the travel time. If they search or forage in prose, award at most two modest items that fit this place.`);
   }
   if (action.type !== 'end') {
     if (endingAvailable(state)) lines.push('NOTE: ENDING CONDITIONS ARE MET here and now. If the survivor takes the way out, set "escape": true and narrate the departure without revealing the hidden cause (the debrief will).');
@@ -347,10 +347,12 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
   }
   onNarrative?.(parsed.narrative);
 
-  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible };
+  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime };
   const notices = applyChanges(state, parsed.changes || {}, ctx);
-  const extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, 240) : 0;
-  const noticesAfter = extra ? advanceTime(state, extra) : [];
+  const resting = pre.allowGmTime && parsed.changes?.resting === true;
+  let extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, resting ? 720 : 240) : 0;
+  if (ctx.travelMinutes) extra = Math.max(extra, ctx.travelMinutes);
+  const noticesAfter = extra ? advanceTime(state, extra, resting ? { sleeping: true, camp: !atShelter(state) } : ctx.travelMinutes ? { exertion: true } : {}) : [];
 
   state.lastChoices = asArray(parsed.choices).filter(c => typeof c === 'string' && c.trim()).slice(0, 4).map(c => c.trim().slice(0, 140));
   if (state.encounter && !state.encounter.resolved) state.lastChoices = encounterChoices(state.encounter);

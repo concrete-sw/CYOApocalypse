@@ -115,6 +115,26 @@ try {
   s = await state();
   if (s.turnCount <= turns) throw new Error('search should run a turn');
 
+  step('free text beats shortcuts');
+  const before = s.turnCount;
+  await cmd('Open the door and wave at the coordinator. Explain you were in the bathroom.');
+  s = await state();
+  if (s.turnCount !== before + 1) throw new Error('a sentence starting with "open" should reach the GM as a free action');
+  await cmd('/open map');
+  if (!(await page.$('.win[data-win="map"]'))) throw new Error('a slash should force the open shortcut');
+  const hourBefore = Math.floor((s.clock.minutes % 1440) / 60);
+  const turnsBefore = s.turnCount;
+  let untilMorning = 7 - hourBefore; if (untilMorning <= 0) untilMorning += 24;
+  await cmd('sleep until morning');
+  s = await state();
+  if (untilMorning <= 12) {
+    if (Math.floor((s.clock.minutes % 1440) / 60) !== 7) throw new Error('"sleep until morning" should rest until 07:00');
+  } else if (s.turnCount !== turnsBefore + 1) throw new Error('"sleep until morning" in daytime should go to the GM as a free action');
+  await cmd('rest 2 hours');
+  const after = await state();
+  if (after.clock.minutes - s.clock.minutes < 120) throw new Error('"rest 2 hours" should advance the clock two hours');
+  s = after;
+
   step('radio');
   await cmd('tune 162.400');
   s = await state();

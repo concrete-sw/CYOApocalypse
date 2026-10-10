@@ -10,12 +10,13 @@ import { generateWorld } from '../engine/worldGenerator.js';
 import { runTurn } from '../engine/gm.js';
 import { runDebrief, finalizeDebrief, fallbackDebrief, computeStats } from '../engine/ending.js';
 import { newGameState, addLog, advanceTime, checkEnd, DOOM_LABEL } from '../engine/state.js';
-import { formatTime, phaseOf, daysLeft, dayOf, isNight, MIN_PER_DAY } from '../engine/clock.js';
+import { formatTime, phaseOf, daysLeft, dayOf, isNight, hourOf, MIN_PER_DAY } from '../engine/clock.js';
 import { APOCALYPSES, apocalypseById, randomApocalypse } from '../engine/apocalypses.js';
 import { BACKGROUNDS, useItem, craft, removeItem, findItem, totalWeight, maxWeight, supplyDays, RECIPES } from '../engine/inventory.js';
 import { deposit, withdraw, recoverCache } from '../engine/shelter.js';
 import { clearGuard, withPlayer, loyaltyLabel, TASKS } from '../engine/companions.js';
 import { getLocation, getNpc, getFaction, fuzzyFind } from '../engine/world.js';
+import { holderOf } from '../engine/factions.js';
 import { conditions, describeInjuries } from '../engine/body.js';
 import * as store from '../engine/storage.js';
 
@@ -366,7 +367,7 @@ export class App {
       case 'search': return `Searches ${a.area}.`;
       case 'rest': return `${a.camp ? 'Makes camp and rests' : 'Rests'} for ${a.hours || 6} hours.`;
       case 'wait': return `Waits ${a.hours || 1} hour${(a.hours || 1) === 1 ? '' : 's'}.`;
-      case 'talk': return `To ${npc(a.npcId)}: "${a.text}"`;
+      case 'talk': return a.indirect ? a.text : `To ${npc(a.npcId)}: "${a.text}"`;
       case 'give': return `Gives ${findItem(s.inventory.items, a.itemId)?.name || 'something'} to ${npc(a.npcId)}.`;
       case 'tune': return `Tunes the radio to ${a.freq}.`;
       case 'scan': return 'Scans the bands.';
@@ -414,7 +415,7 @@ export class App {
   search(area) { return this.act({ type: 'search', area }); }
   rest(hours = 6, camp = false) { return this.act({ type: 'rest', hours, camp }); }
   wait(hours = 1) { return this.act({ type: 'wait', hours }); }
-  talk(npcId, text) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim() }); }
+  talk(npcId, text, indirect = false) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim(), indirect }); }
   give(itemId, npcId) { return this.act({ type: 'give', itemId, npcId }); }
   tune(freq) { return this.act({ type: 'tune', freq }); }
   scan() { return this.act({ type: 'scan' }); }
@@ -496,62 +497,76 @@ export class App {
   }
 
   // ----------------------------------------------------------- command bar
+  /**
+   * The world is open: anything typed goes to the Game Master as a free action
+   * unless it is unmistakably one of the shortcuts in parseCommand (a leading
+   * slash forces a shortcut). A shortcut only fires when its target resolves.
+   */
   handleCommand(line) {
     const s = this.state; if (!s) return;
     if (s.ended) { toast('This record is closed.', 'warn'); return; }
-    const [cmd, ...rest] = line.split(/\s+/);
-    const arg = rest.join(' ').trim();
-    const c = cmd.toLowerCase();
-    const bad = m => toast(m, 'warn');
+    if (s.encounter && !s.encounter.resolved) return this.act({ type: 'encounter', text: line });
+    const forced = line.startsWith('/');
+    const text = forced ? line.slice(1).trim() : line.trim();
+    if (!text) return;
+    const action = this.parseCommand(text);
+    if (action) return action();
+    if (forced) { toast(`No shortcut "${text}". Type it without the slash to act on it.`, 'warn'); return; }
+    return this.free(text);
+  }
+
+  /** Returns a function to run, or null when the line should go to the GM as written. */
+  parseCommand(text) {
+    const s = this.state;
+    const low = text.toLowerCase().replace(/[.!?]+$/, '').trim();
     const known = () => s.discovered.locations.map(id => getLocation(s, id)).filter(Boolean);
     const findLoc = q => fuzzyFind(known(), q);
     const findNpc = q => fuzzyFind(s.npcsMet.map(id => getNpc(s, id)).filter(Boolean), q);
-    if (s.encounter && !s.encounter.resolved) return this.act({ type: 'encounter', text: line });
-    switch (c) {
-      case 'help': case '?': return this.wm.show('help');
-      case 'open': case 'show': { const id = DOCK_ORDER.find(x => x !== '---' && (x === arg.toLowerCase() || this.wm.defs.get(x)?.title.toLowerCase().startsWith(arg.toLowerCase()))); return id ? this.wm.show(id) : bad(`No panel "${arg}".`); }
-      case 'go': case 'travel': case 'goto': case 'walk': { const l = findLoc(arg); if (l) return this.travel(l.id); break; }
-      case 'look': case 'l': return this.look();
-      case 'search': case 'scavenge': case 'loot': return arg ? this.search(arg) : bad('search <area>');
-      case 'rest': case 'sleep': return this.rest(parseFloat(arg) || 6);
-      case 'camp': return this.rest(parseFloat(arg) || 8, true);
-      case 'wait': return this.wait(parseFloat(arg) || 1);
-      case 'skip': return this.skipAhead();
-      case 'eat': case 'drink': case 'use': case 'take': { const it = findItem(s.inventory.items, arg); if (it) return this.useItem(it.id); break; }
-      case 'craft': case 'make': { const r = RECIPES.find(x => x.id === arg.toLowerCase() || x.name.toLowerCase().startsWith(arg.toLowerCase())); return r ? this.craft(r.id) : bad('craft <recipe>; the Inventory panel lists them.'); }
-      case 'drop': { const it = findItem(s.inventory.items, arg); if (it) return this.dropItem(it.id); break; }
-      case 'give': { const m = arg.match(/^(.+?)\s+to\s+(.+)$/i); if (!m) break; const it = findItem(s.inventory.items, m[1]); const n = findNpc(m[2]); if (it && n && s.companions[n.id]?.status === 'with') return this.give(it.id, n.id); if (it && n) return bad('They are not with you.'); break; }
-      case 'talk': case 'say': case 'ask': case 'tell': {
-        const m = arg.match(/^(?:to\s+)?(\S+)\s*(.*)$/); if (!m) break;
-        const n = findNpc(m[1]); if (!n) break;
-        if (!m[2]) { this.selected.npc = n.id; return this.wm.show('companions'); }
-        return this.talk(n.id, m[2]);
-      }
-      case 'assign': case 'send': {
-        const m = arg.match(/^(\S+)\s+(scout|scavenge|hunt|guard)(?:\s+(?:to\s+|at\s+)?(.+))?$/i); if (!m) return bad('assign <name> scout|scavenge|hunt|guard [place]');
-        const n = findNpc(m[1]); if (!n) return bad('Unknown person.');
-        const l = m[3] ? findLoc(m[3]) : null; if (m[3] && !l) return bad(`Unknown place "${m[3]}".`);
-        return this.assign(n.id, m[2].toLowerCase(), l?.id || null);
-      }
-      case 'tune': case 'radio': return arg ? this.tune(arg) : this.wm.show('radio');
-      case 'scan': return this.scan();
-      case 'listen': return this.wm.show('radio');
-      case 'claim': case 'settle': return this.claim();
-      case 'fortify': case 'barricade': return this.fortify();
-      case 'abandon': return this.abandon();
-      case 'trade': case 'barter': return this.trade(arg || 'What do you have to trade?');
-      case 'stock': case 'status': return this.takeStock();
-      case 'inventory': case 'inv': case 'i': return this.wm.show('inventory');
-      case 'map': case 'm': return this.wm.show('map');
-      case 'tile': return this.wm.tile();
-      case 'hint': return this.hint(arg);
-      case 'note': case 'n': { if (!arg) return this.wm.show('journal'); s.journal = (s.journal ? s.journal + '\n' : '') + arg; this.autosave(); this.wm.refresh('journal'); return toast('Note added.'); }
-      case 'save': return this.wm.show('settings');
-      case 'export': return store.exportState(s);
-      case 'end': if (!arg || /story|game|it/i.test(arg)) return this.endStory(); break;
-      default: break;
-    }
-    return this.free(line);
+    const items = s.inventory.items;
+    const UNTIL = '(morning|dawn|daylight|sunrise|first light|noon|midday|evening|dusk|sunset|dark|night|nightfall)';
+    let m;
+    const whole = {
+      'help': () => this.wm.show('help'), '?': () => this.wm.show('help'), 'commands': () => this.wm.show('help'),
+      'map': () => this.wm.show('map'), 'inventory': () => this.wm.show('inventory'), 'inv': () => this.wm.show('inventory'), 'i': () => this.wm.show('inventory'), 'pack': () => this.wm.show('inventory'),
+      'stock': () => this.takeStock(), 'take stock': () => this.takeStock(), 'status': () => this.takeStock(),
+      'save': () => this.wm.show('settings'), 'export': () => store.exportState(s), 'tile': () => this.wm.tile(),
+      'look': () => this.look(), 'look around': () => this.look(), 'l': () => this.look(),
+      'skip': () => this.skipAhead(), 'skip ahead': () => this.skipAhead(),
+      'scan': () => this.scan(), 'listen': () => this.scan(), 'radio': () => this.wm.show('radio'),
+      'claim': () => this.claim(), 'settle': () => this.claim(), 'claim shelter': () => this.claim(), 'settle here': () => this.claim(),
+      'fortify': () => this.fortify(), 'barricade': () => this.fortify(), 'abandon': () => this.abandon(), 'abandon shelter': () => this.abandon(),
+      'hint': () => this.hint(), 'end my story': () => this.endStory(), 'end story': () => this.endStory()
+    };
+    if (whole[low]) return whole[low];
+    if ((m = low.match(/^(?:open|show)\s+(?:me\s+)?(?:the\s+)?(\w+)\s*(?:panel|window)?$/))) { const id = DOCK_ORDER.find(x => x !== '---' && x !== 'tile' && (x === m[1] || this.wm.defs.get(x)?.title.toLowerCase().startsWith(m[1]))); return id ? () => this.wm.show(id) : null; }
+    if ((m = low.match(/^(?:go|travel|goto|walk|head|move|set out|make my way)\s+(?:to\s+|towards?\s+|for\s+|over to\s+)?(?:the\s+)?(.+)$/))) { const l = findLoc(m[1]); return l ? () => this.travel(l.id) : null; }
+    if ((m = low.match(/^(?:i\s+)?(?:search|scavenge|loot|ransack|rummage(?:\s+(?:through|in|around))?|dig\s+through|pick\s+through|comb\s+through)\s+(?:the\s+)?(.+)$/))) { const area = m[1]; if (findNpc(area) || area.split(/\s+/).length > 5 || /,|\b(?:and|then|while|but|for|before|after)\b/.test(area)) return null; return () => this.search(area); }
+    if ((m = low.match(new RegExp(`^(?:rest|sleep|nap|lie\\s+down|bed\\s+down|turn\\s+in|get\\s+some\\s+sleep|get\\s+some\\s+rest)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : (/^nap/.test(low) ? 2 : 6); if (hours == null) return null; return () => this.rest(hours); }
+    if ((m = low.match(new RegExp(`^(?:wait|pass\\s+the\\s+time|kill\\s+time|hold\\s+here)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : 1; if (hours == null) return null; return () => this.wait(hours); }
+    if ((m = low.match(/^(?:eat|drink|use|take|consume|swallow|apply)\s+(?:the\s+|some\s+|a\s+|an\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.useItem(it.id) : null; }
+    if ((m = low.match(/^(?:drop|discard|ditch|throw\s+away|dump)\s+(?:the\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.dropItem(it.id) : null; }
+    if ((m = low.match(/^(?:craft|make|build)\s+(?:a\s+|an\s+|some\s+)?(.+)$/))) { const r = RECIPES.find(x => x.id === m[1] || x.name.toLowerCase().startsWith(m[1]) || x.makes.name.toLowerCase().startsWith(m[1])); return r ? () => this.craft(r.id) : null; }
+    if ((m = low.match(/^(?:give|hand|pass)\s+(?:the\s+|my\s+|some\s+|a\s+)?(.+?)\s+to\s+(.+)$/))) { const it = findItem(items, m[1]); const n = findNpc(m[2]); return it && n && s.companions[n.id]?.status === 'with' ? () => this.give(it.id, n.id) : null; }
+    if ((m = low.match(/^(?:talk|speak|say|ask|tell)\s+(?:to\s+|with\s+)?(?:the\s+)?(\S+)\s*(.*)$/))) { const n = findNpc(m[1]); if (!n) return null; return m[2].trim() ? () => this.talk(n.id, text, true) : () => { this.selected.npc = n.id; this.wm.show('companions'); }; }
+    if ((m = low.match(/^(?:assign|send)\s+(\S+)\s+(?:to\s+)?(scout|scavenge|hunt|guard)(?:\s+(?:to\s+|at\s+)?(?:the\s+)?(.+))?$/))) { const n = findNpc(m[1]); if (!n) return null; const l = m[3] ? findLoc(m[3]) : null; if (m[3] && !l) return null; return () => this.assign(n.id, m[2], l?.id || null); }
+    if ((m = low.match(/^(?:tune|dial|radio|tune\s+(?:the\s+)?radio|set\s+(?:the\s+)?radio|switch\s+(?:the\s+)?radio)\s+(?:to\s+|in\s+to\s+|into\s+)?(\d+(?:[.,]\d+)?)/))) return () => this.tune(m[1]);
+    if (/^(?:listen\s+to|turn\s+on|check|try|switch\s+on|scan|work)\s+(?:the\s+)?radio\b/.test(low) || /^scan\s+(?:the\s+)?(?:bands?|frequencies|airwaves|dial)$/.test(low)) return () => this.scan();
+    if ((m = low.match(/^(?:trade|barter)\b\s*(.*)$/))) { const f = holderOf(s, s.location); return f && !(m[1] && findNpc(m[1])) ? () => this.trade(m[1] || 'What do you have to trade?') : null; }
+    if (/^(?:hint|give\s+me\s+a\s+hint|any\s+hints?|what\s+should\s+i\s+do(?:\s+next)?)\b/.test(low)) return () => this.hint(text);
+    if ((m = low.match(/^(?:note|journal)\s+(.+)$/))) return () => { s.journal = (s.journal ? s.journal + '\n' : '') + text.replace(/^\S+\s+/, ''); this.autosave(); this.wm.refresh('journal'); toast('Note added.'); };
+    return null;
+  }
+
+  /**
+   * Hours from now until a named time of day, at least one. Returns null when the
+   * target is more than twelve hours away ("sleep until morning" at 10:00): that is
+   * not a rest the clock can simply skip, so the line goes to the GM as a free action.
+   */
+  hoursUntil(word) {
+    const h = hourOf(this.state.clock.minutes);
+    const target = { morning: 7, dawn: 6, daylight: 7, sunrise: 6, 'first light': 6, noon: 12, midday: 12, evening: 18, dusk: 19, sunset: 19, dark: 21, night: 21, nightfall: 21 }[word] ?? 7;
+    let d = target - h; if (d <= 0) d += 24;
+    return d > 12 ? null : Math.max(1, d);
   }
 
   // ---------------------------------------------------------------- ending

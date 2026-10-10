@@ -13,6 +13,7 @@ const { tick } = await eng('survival.js');
 const { useItem, craft, availableRecipes, addItem, supplyDays, totalWeight, maxWeight } = await eng('inventory.js');
 const { addInjury, treatInjury } = await eng('body.js');
 const { recruit, dailyUpkeep, checkBetrayals, assign, withPlayer, skillCount } = await eng('companions.js');
+const { seededRandom } = await eng('util.js');
 const { claimShelter, fortify, deposit, nightlyRaidRoll } = await eng('shelter.js');
 const { tune, scan } = await eng('radio.js');
 const { travelPlan, rollTravel, scavengeBudget, resolveEncounter, makeEncounter, classifyApproach } = await eng('encounters.js');
@@ -107,7 +108,7 @@ console.log('✓ applyChanges validation:', notices.length, 'notices');
 // Encounter resolution
 state.encounter = makeEncounter(state, getLocation(state, 'loc2'), Math.random, { context: 'test' });
 assert.equal(classifyApproach('I run for the alley'), 'flee');
-const res = resolveEncounter(state, 'fight');
+const res = resolveEncounter(state, 'fight', seededRandom(7)); // a lost fight can kill a companion; keep the run deterministic
 assert.ok(res && res.outcome && res.text.length > 20); assert.equal(state.encounter, null);
 console.log('✓ encounter:', res.outcome, '|', res.text.slice(0, 120));
 
@@ -130,9 +131,10 @@ assert.ok(up.some(e => e.kind === 'companion_hungry'), 'hungry companions compla
 const bet = checkBetrayals(state);
 assert.ok(bet.some(e => e.npcId === 'n2' && e.effect === 'steal'), 'Rico steals when food is short');
 assert.equal(state.companions.n2.status, 'left');
-r = assign(state, 'n1', 'scout', 'loc4'); assert.ok(r.ok, r.notice); assert.equal(state.companions.n1.status, 'away');
+recruit(state, 'n3');
+r = assign(state, 'n3', 'scout', 'loc4'); assert.ok(r.ok, r.notice); assert.equal(state.companions.n3.status, 'away');
 advanceTime(state, 5 * 60);
-assert.equal(state.companions.n1.status === 'away', false, 'assignment resolved');
+assert.equal(state.companions.n3.status === 'away', false, 'assignment resolved');
 console.log('✓ companions: upkeep/betrayal/assignment', takeEvents(state).map(e => e.kind));
 
 // Radio
