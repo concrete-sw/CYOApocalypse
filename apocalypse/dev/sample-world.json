@@ -1,0 +1,1032 @@
+{
+  "title": "The Quiet Season",
+  "apocalypse": {
+    "type": "Engineered pandemic",
+    "publicBelief": "A novel respiratory virus, Harrow fever, jumped from the poultry farms east of Port Hollis. The government says the outbreak is contained to the Reach and that a vaccine convoy is weeks away.",
+    "trueCause": "Harrow fever was engineered at the Meridian Agrisciences campus as a sterilising agent for a defence contract that went wrong; a containment failure in late September released it. Meridian's remaining staff are using the chaos to collect infected and exposed people as test subjects, and the so-called vaccine convoy is the collection run. The Wardens militia deliver survivors to the convoy in exchange for fuel and antivirals. The only real way out of the Reach is by sea, aboard Annie Kolar's fishing boat the Marit, from Dunmore Cove, during the week the coast guard blockade shifts north.",
+    "hazardName": "Exposure",
+    "hazardDescription": "Viral load from infected air, blood and crowded rooms; high exposure brings fever, confusion and worse."
+  },
+  "region": {
+    "name": "Cascade Reach",
+    "country": "USA",
+    "startLocationId": "loc1",
+    "season": "autumn",
+    "climate": "temperate maritime",
+    "description": "A drowned-valley county on the Pacific coast: one port town, a bridge, a hospital on the hill, farms running up to the reservoir, and a biotech campus everyone pretended not to notice. Rain nine months of the year. Ferries to the capital twice a day, and the Tillery Bridge for everyone else.",
+    "startDate": "2025-10-14",
+    "descriptionNow": "The ferries have stopped and the bridge is the only road."
+  },
+  "survivor": {
+    "title": "emergency nurse",
+    "lifeBefore": "You work nights in the emergency department at St. Brennan, twelve-hour shifts, four on and three off, and you have done it long enough to know which doctors to trust and which coffee machine works. You rent a one-bedroom on Harrow Street above the laundrette, alone since the spring, with a cat that belongs to the building more than to you. Your sister lives across the bridge and texts you photographs of her kids. You drive an old hatchback that needs a clutch, you buy your groceries at Lindqvist's on the corner, and you know the pharmacy nurse, Maya Okonkwo, well enough to nod to in the queue. Money is tight but regular. You sleep badly, like everyone on nights.",
+    "skills": [],
+    "kit": [],
+    "carry": 0,
+    "vehicle": "Car keys (hatchback, half a tank)"
+  },
+  "prologue": {
+    "ordinaryLife": "The survivor wakes in their apartment on Harrow Street to the sound of rain on the fire escape and a neighbour's television turned up too loud. Coffee, the last of the milk, a text from a friend about a sick coworker. On the way down the stairs the building manager is taping a notice to the door about the water being safe. The pharmacy on the corner has a line outside for the first time anyone can remember, and two people in the line are wearing masks. A helicopter passes low over the port, heading inland toward the Meridian campus, which it never does.",
+    "signs": [
+      "A text from a colleague about a coworker with a cough that will not shift.",
+      "The pharmacy on the corner has a queue outside for the first time anyone can remember, and two people in it are wearing masks.",
+      "A helicopter passes low over the port, heading inland toward the Meridian campus, which it never does.",
+      "The building manager tapes a notice to the door saying the water is safe to drink."
+    ],
+    "howTheyNotice": "You notice it as a nurse would: the bus driver slumped at the wheel at Harrow and Third is not drunk and not asleep, and the blood on the glass is coming from his mouth. You know what that looks like, and you have never seen it outside a ward.",
+    "theMoment": "At the corner of Harrow and Third a city bus stops in the middle of the intersection and does not move. The driver is slumped against the window, coughing blood onto the glass, and a passenger is screaming at the door. Someone runs. Then everyone runs. A National Guard truck comes up Third with a loudspeaker telling people to return to their homes, and behind it the pharmacy window gives way under the weight of the crowd. The survivor sees a woman they recognise from the second floor fall and not get up, and a man step over her carrying armfuls of bottled water. The phone in their pocket buzzes once with an emergency alert and then loses signal.",
+    "firstHours": "The streets empty fast, then fill again with people carrying things. Sirens for an hour, then fewer. The bridge is jammed with cars. Shops are looted by nightfall. The power holds, for now. A sensible survivor can get home, lock the door, fill every container with water, and listen to the radio. Anyone who goes out after dark meets the frightened, the sick, and the men who have already decided this is their chance."
+  },
+  "situationReport": "This is the Cascade Reach emergency management network. Harrow fever is spreading in Port Hollis and the surrounding county. Symptoms are high fever, cough, confusion and bleeding from the nose and mouth. Residents are instructed to remain indoors, boil all water, and avoid contact with anyone showing symptoms. St. Brennan Hospital is accepting critical cases only. The port and the ferry terminal are closed. Tillery Bridge is open to outbound traffic under National Guard control; expect delays and identification checks. Do not approach the Meridian Agrisciences campus; it is a restricted biohazard site. A vaccination and evacuation effort is being organised; further information will be broadcast on this channel. Stay calm, stay home, and keep your radio on.",
+  "timeline": [
+    {
+      "day": 0,
+      "hour": 10,
+      "event": "Emergency broadcast: Harrow fever cases triple overnight; schools and the port close; residents are told to stay indoors.",
+      "doom": 2,
+      "visible": true,
+      "contact": false,
+      "effects": {}
+    },
+    {
+      "day": 1,
+      "hour": 8,
+      "event": "Port Hollis is placed under quarantine. Tillery Bridge becomes the only road out, under National Guard control.",
+      "doom": 2,
+      "visible": true,
+      "contact": false,
+      "effects": {}
+    },
+    {
+      "day": 2,
+      "hour": 3,
+      "event": "Meridian Agrisciences evacuates its senior staff from the campus by helicopter, leaving the interns and the security contractors behind.",
+      "doom": 2,
+      "visible": false,
+      "contact": false,
+      "effects": {}
+    },
+    {
+      "day": 4,
+      "hour": 7,
+      "event": "The National Guard abandons the Tillery Bridge checkpoint overnight. By noon a militia calling itself the Wardens holds it.",
+      "doom": 3,
+      "visible": true,
+      "contact": false,
+      "effects": {
+        "locationId": "loc3",
+        "capturedBy": "f1",
+        "dangerDelta": 1
+      }
+    },
+    {
+      "day": 6,
+      "hour": 19,
+      "event": "Power fails across the Reach. The hospital's generator is the only light for miles.",
+      "doom": 3,
+      "visible": true,
+      "contact": false,
+      "effects": {
+        "threatDelta": 1,
+        "utilities": {
+          "power": false,
+          "water": false,
+          "cell": false,
+          "internet": false
+        }
+      }
+    },
+    {
+      "day": 8,
+      "hour": 5,
+      "event": "The Wardens quietly agree terms with a Meridian liaison at the bridge: survivors delivered to the fairgrounds in exchange for fuel and antivirals.",
+      "doom": 3,
+      "visible": false,
+      "contact": false,
+      "effects": {}
+    },
+    {
+      "day": 10,
+      "hour": 12,
+      "event": "The emergency channel announces a vaccination and evacuation convoy for day 15 at the County Fairgrounds. Everyone is told to report.",
+      "doom": 3,
+      "visible": true,
+      "contact": false,
+      "effects": {
+        "radioFreq": "162.400"
+      }
+    },
+    {
+      "day": 12,
+      "hour": 20,
+      "event": "A woman's voice breaks radio silence on 156.800: Annie Kolar of the fishing vessel Marit, asking anyone with diesel to meet her at the marina after dark.",
+      "doom": 3,
+      "visible": true,
+      "contact": true,
+      "effects": {
+        "radioFreq": "156.800"
+      }
+    },
+    {
+      "day": 15,
+      "hour": 9,
+      "event": "The convoy arrives at the fairgrounds. Those who report are sorted; the sick are taken away in sealed trucks and the healthy are kept behind the livestock barns.",
+      "doom": 4,
+      "visible": false,
+      "contact": false,
+      "effects": {
+        "locationId": "loc7",
+        "capturedBy": "f1",
+        "dangerDelta": 2
+      }
+    },
+    {
+      "day": 18,
+      "hour": 6,
+      "event": "The coast guard blockade shifts north to the capital. The water off Dunmore Cove is open for about a week.",
+      "doom": 4,
+      "visible": false,
+      "contact": false,
+      "effects": {}
+    },
+    {
+      "day": 21,
+      "hour": 11,
+      "event": "A second wave of the fever. Mortality spikes. St. Brennan Hospital stops answering its radio.",
+      "doom": 4,
+      "visible": true,
+      "contact": false,
+      "effects": {
+        "threatDelta": 1,
+        "locationId": "loc4",
+        "dangerDelta": 1
+      }
+    },
+    {
+      "day": 24,
+      "hour": 22,
+      "event": "The Reach Mutual Aid camp at Blackwater Reservoir burns in the night. Survivors scatter along the shore.",
+      "doom": 4,
+      "visible": true,
+      "contact": false,
+      "effects": {
+        "locationId": "loc9",
+        "dangerDelta": 2
+      }
+    },
+    {
+      "day": 26,
+      "hour": 14,
+      "event": "The Wardens begin burning infected districts of Port Hollis block by block.",
+      "doom": 5,
+      "visible": true,
+      "contact": false,
+      "effects": {
+        "threatDelta": 1
+      }
+    },
+    {
+      "day": 29,
+      "hour": 8,
+      "event": "The capital stops broadcasting. The emergency channel carries only a tone.",
+      "doom": 5,
+      "visible": true,
+      "contact": false,
+      "effects": {}
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc1",
+      "name": "Harrow Street Apartments",
+      "type": "residence",
+      "x": 50,
+      "y": 50,
+      "danger": 1,
+      "resources": {
+        "food": 1,
+        "water": 1,
+        "medical": 0,
+        "fuel": 0,
+        "materials": 1,
+        "weapons": 0
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 2,
+      "hazard": 0,
+      "description": "A four-storey brick walk-up with a fire escape that rattles in the wind and a lobby that smells of wet carpet. Twenty-two apartments, most of them emptying. The roof has a water tank and a view of the port, the bridge and the hospital on its hill.",
+      "sharpEyeDetails": [
+        "The door to 3B has been forced and then wedged shut again from inside.",
+        "Someone has been filling bathtubs: the building's water pressure drops every evening."
+      ],
+      "searchableAreas": [
+        "your own apartment",
+        "the other apartments",
+        "the basement and boiler room",
+        "the roof"
+      ],
+      "hidden": [
+        {
+          "what": "a neighbour's hidden stash of canned food and a hunting rifle behind the water heater in apartment 3B",
+          "where": "the utility closet behind the water heater in apartment 3B",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "Harrow Street runs downhill to the port and uphill toward the hospital."
+    },
+    {
+      "id": "loc2",
+      "name": "Lindqvist Pharmacy and Grocery",
+      "type": "store",
+      "x": 42,
+      "y": 44,
+      "danger": 2,
+      "resources": {
+        "food": 3,
+        "water": 2,
+        "medical": 3,
+        "fuel": 0,
+        "materials": 1,
+        "weapons": 0
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 1,
+      "hazard": 1,
+      "description": "A corner shop with a pharmacy counter at the back, its front window gone on Day 0 and the shelves swept half bare. Broken glass in the aisles, a smell of spilled bleach and rotting produce. The back office door is steel and still locked.",
+      "sharpEyeDetails": [
+        "The controlled-substances cabinet behind the counter is intact; whoever looted the front did not know it was there.",
+        "Bloody footprints lead from the pharmacy counter to the alley door."
+      ],
+      "searchableAreas": [
+        "the grocery aisles",
+        "the pharmacy counter",
+        "the back office",
+        "the alley and dumpsters"
+      ],
+      "hidden": [
+        {
+          "what": "the pharmacist's locked back cabinet of antibiotics and insulin",
+          "where": "the locked cabinet in the back office, behind the controlled-substances sign",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "Two blocks downhill from Harrow Street."
+    },
+    {
+      "id": "loc3",
+      "name": "Tillery Bridge Checkpoint",
+      "type": "checkpoint",
+      "x": 62,
+      "y": 38,
+      "danger": 3,
+      "resources": {
+        "food": 1,
+        "water": 1,
+        "medical": 1,
+        "fuel": 2,
+        "materials": 2,
+        "weapons": 2
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 0,
+      "hazard": 1,
+      "description": "A concrete barrier line across the eastern end of the only bridge out of the Reach: Jersey barriers, a shot-up National Guard Humvee, a tent, floodlights on a generator. Cars abandoned three deep on the approach. Whoever holds this holds the road.",
+      "sharpEyeDetails": [
+        "The Humvee's glovebox hangs open; paper inside has not been rained on, so it was opened recently.",
+        "Shell casings on the deck are all one calibre: somebody shot a lot, once."
+      ],
+      "searchableAreas": [
+        "the abandoned cars",
+        "the Humvee",
+        "the checkpoint tent",
+        "under the bridge"
+      ],
+      "hidden": [
+        {
+          "what": "a Wardens duty roster listing 'collection runs' to the fairgrounds",
+          "where": "the glovebox of the abandoned National Guard Humvee",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "The approach is exposed for half a kilometre. Whoever holds the checkpoint sees you coming."
+    },
+    {
+      "id": "loc4",
+      "name": "St. Brennan Hospital",
+      "type": "hospital",
+      "x": 30,
+      "y": 32,
+      "danger": 3,
+      "resources": {
+        "food": 1,
+        "water": 2,
+        "medical": 4,
+        "fuel": 1,
+        "materials": 1,
+        "weapons": 0
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 3,
+      "hazard": 2,
+      "description": "A six-storey hospital on the hill above the town, generator thudding in the basement, every corridor lined with cots. The fourth floor is the isolation ward and nobody goes up there willingly. The staff who stayed are grey with exhaustion. The smell is bleach over something worse.",
+      "sharpEyeDetails": [
+        "The isolation ward office has a brass plate: Dr. A. Osei, Infectious Disease. Its door has been taped shut from outside.",
+        "Trucks have been loading at the morgue dock at night; there are tyre tracks over the biohazard bins."
+      ],
+      "searchableAreas": [
+        "the emergency department",
+        "the pharmacy stores",
+        "the fourth-floor isolation ward",
+        "the basement and morgue"
+      ],
+      "hidden": [
+        {
+          "what": "Dr. Osei's handwritten notes: the 'vaccine convoy' is collecting the sick for Meridian, not treating them, and nobody who reports to the fairgrounds comes back",
+          "where": "the locked drawer of the desk in the fourth-floor isolation ward office",
+          "clueId": "c1"
+        },
+        {
+          "what": "a working oxygen concentrator and a case of IV fluids",
+          "where": "the basement supply cage behind the morgue",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "Uphill from town; the road is clear but overlooked from the ward windows."
+    },
+    {
+      "id": "loc5",
+      "name": "Port Hollis Marina",
+      "type": "water",
+      "x": 72,
+      "y": 62,
+      "danger": 2,
+      "resources": {
+        "food": 1,
+        "water": 1,
+        "medical": 0,
+        "fuel": 4,
+        "materials": 2,
+        "weapons": 1
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 2,
+      "hazard": 0,
+      "description": "Floating pontoons, halyards ticking against masts, a harbourmaster's office with its windows painted over from inside, and a padlocked fuel shed at the end of C dock. Half the boats are gone; the rest have been stripped of anything that unbolts. Gulls everywhere.",
+      "sharpEyeDetails": [
+        "The fuel shed padlock is new and the Wardens' paint-stripe is on the door.",
+        "The harbourmaster's chart table is covered in tide tables weighted down with a coast guard radio log."
+      ],
+      "searchableAreas": [
+        "the harbourmaster's office",
+        "the fuel shed on C dock",
+        "the boats",
+        "the chandlery"
+      ],
+      "hidden": [
+        {
+          "what": "the harbourmaster's coast guard patrol schedule: the blockade shifts north on day 18 for about a week, leaving the water off Dunmore Cove open",
+          "where": "the chart table in the harbourmaster's office, under the tide tables",
+          "clueId": "c2"
+        },
+        {
+          "what": "two jerrycans of marine diesel",
+          "where": "the padlocked fuel shed at the end of C dock",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "The waterfront road is watched from the bridge by day."
+    },
+    {
+      "id": "loc6",
+      "name": "Meridian Agrisciences Campus",
+      "type": "industrial",
+      "x": 18,
+      "y": 70,
+      "danger": 4,
+      "resources": {
+        "food": 1,
+        "water": 1,
+        "medical": 3,
+        "fuel": 2,
+        "materials": 3,
+        "weapons": 1
+      },
+      "heldBy": null,
+      "initiallyKnown": false,
+      "shelterQuality": 1,
+      "hazard": 4,
+      "description": "Three glass buildings behind a double fence on the marsh road, the lawns already going to seed. The gatehouse is empty, the cameras still turn. Building C has its ground-floor windows blown out from inside and a smell of burnt plastic. Something hums in the basement.",
+      "sharpEyeDetails": [
+        "The helipad has fresh scorch marks and a dropped clipboard with a passenger manifest.",
+        "A sign on Building C reads BSL-3: AUTHORISED PERSONNEL ONLY and the biometric lock has been propped open with a fire extinguisher."
+      ],
+      "searchableAreas": [
+        "the gatehouse",
+        "Building A offices",
+        "Building C laboratories",
+        "the server room",
+        "the loading bay"
+      ],
+      "hidden": [
+        {
+          "what": "an internal memo: Project Harrow was a sterilising agent built for a defence contract that failed containment; the convoy exists to collect 'viable subjects'",
+          "where": "the server room on the second floor of Building C, in the fireproof cabinet",
+          "clueId": "c5"
+        }
+      ],
+      "travelNotes": "The marsh road floods at high tide. Masks are essential inside."
+    },
+    {
+      "id": "loc7",
+      "name": "County Fairgrounds",
+      "type": "government",
+      "x": 60,
+      "y": 80,
+      "danger": 2,
+      "resources": {
+        "food": 2,
+        "water": 2,
+        "medical": 1,
+        "fuel": 1,
+        "materials": 2,
+        "weapons": 1
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 2,
+      "hazard": 1,
+      "description": "A sprawl of livestock barns, a grandstand and a gravel lot where the county set up its relief point: FEMA-style tents, a water buffalo, a line of portable toilets. By day it looks organised. The chain-link behind the livestock barns is new and too high for livestock.",
+      "sharpEyeDetails": [
+        "Fresh chain-link and biohazard bins behind the livestock barns, past the 'authorised personnel' tape.",
+        "The relief tent's intake forms ask about fever and exposure before they ask about names."
+      ],
+      "searchableAreas": [
+        "the relief tents",
+        "the grandstand",
+        "the livestock barns",
+        "the gravel lot"
+      ],
+      "hidden": [
+        {
+          "what": "holding pens with fresh chain-link, biohazard bins and a sealed truck's tyre tracks behind the livestock barns",
+          "where": "behind the livestock barns, past the authorised personnel tape",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "South of town on the county road, two hours on foot."
+    },
+    {
+      "id": "loc8",
+      "name": "Dunmore Cove",
+      "type": "water",
+      "x": 86,
+      "y": 74,
+      "danger": 1,
+      "resources": {
+        "food": 1,
+        "water": 2,
+        "medical": 0,
+        "fuel": 0,
+        "materials": 1,
+        "weapons": 0
+      },
+      "heldBy": null,
+      "initiallyKnown": false,
+      "shelterQuality": 1,
+      "hazard": 0,
+      "description": "A shingle cove under a rock overhang, reached by a goat path from the coast road. A freshwater seep, driftwood, a smokehouse that still smells of fish. From the water you cannot see the boat moored under the overhang, which is the point.",
+      "sharpEyeDetails": [
+        "Fresh bootprints on the shingle lead under the overhang and come back.",
+        "The smokehouse has been used within the week."
+      ],
+      "searchableAreas": [
+        "the shingle beach",
+        "the smokehouse",
+        "under the overhang"
+      ],
+      "hidden": [
+        {
+          "what": "Annie Kolar's boat, the Marit, moored under the overhang out of sight of the water, fuel tanks nearly empty",
+          "where": "under the rock overhang at the north end of the cove",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "Half a day's walk east along the coast road from the marina; a steep path down."
+    },
+    {
+      "id": "loc9",
+      "name": "Blackwater Reservoir Cabins",
+      "type": "camp",
+      "x": 22,
+      "y": 20,
+      "danger": 1,
+      "resources": {
+        "food": 2,
+        "water": 5,
+        "medical": 1,
+        "fuel": 1,
+        "materials": 3,
+        "weapons": 1
+      },
+      "heldBy": "f2",
+      "initiallyKnown": false,
+      "shelterQuality": 4,
+      "hazard": 0,
+      "description": "A church camp of log cabins above the reservoir, a chapel with a bell, vegetable beds under netting, and a sign on the gate that says ALL WELCOME in three languages. Reach Mutual Aid runs it with rotas and prayers. It feels like the last sane place in the county.",
+      "sharpEyeDetails": [
+        "Pastor Tom wears a scarf indoors and does not shake hands.",
+        "The infirmary cabin has more cots than the camp's size explains."
+      ],
+      "searchableAreas": [
+        "the cabins",
+        "the chapel",
+        "the vegetable beds",
+        "the boathouse"
+      ],
+      "hidden": [
+        {
+          "what": "Pastor Tom's fever journal: he has been sick for a week and is hiding it",
+          "where": "inside the hollow lectern in the chapel cabin",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "Up the reservoir road north of the hospital; a long walk, safe by day."
+    },
+    {
+      "id": "loc10",
+      "name": "Route 9 Truck Stop",
+      "type": "transport",
+      "x": 80,
+      "y": 30,
+      "danger": 2,
+      "resources": {
+        "food": 2,
+        "water": 1,
+        "medical": 0,
+        "fuel": 3,
+        "materials": 2,
+        "weapons": 1
+      },
+      "heldBy": null,
+      "initiallyKnown": true,
+      "shelterQuality": 2,
+      "hazard": 0,
+      "description": "Diesel pumps, a diner with its windows intact, a motel wing, and an overturned Peterbilt across the forecourt. Truckers stranded here on Day 1 are mostly gone east on foot. The diner's walk-in is warm and smells like it.",
+      "sharpEyeDetails": [
+        "The overturned truck's cab still has power; a CB radio light glows inside.",
+        "Someone has pencilled a line across a wall map of the coast and written 'CG' along it."
+      ],
+      "searchableAreas": [
+        "the diner",
+        "the motel rooms",
+        "the pumps and forecourt",
+        "the overturned truck"
+      ],
+      "hidden": [
+        {
+          "what": "a working CB radio and a wall map with the coast guard blockade line pencilled in",
+          "where": "the cab of the overturned Peterbilt at the diesel pumps",
+          "clueId": null
+        }
+      ],
+      "travelNotes": "East of the bridge on Route 9; you must pass the checkpoint or wade the creek."
+    }
+  ],
+  "factions": [
+    {
+      "id": "f1",
+      "name": "The Wardens",
+      "ideology": "Order first. Quarantine enforced at gunpoint by men who were nobody a month ago.",
+      "goal": "Hold the bridge, control movement in the Reach, and be the authority when the government comes back.",
+      "secret": "They deliver survivors, sick and healthy alike, to Meridian's convoy at the fairgrounds in exchange for fuel and antivirals. Their 'collection runs' are the engine of the whole disaster.",
+      "strength": 4,
+      "baseLocationId": "loc3",
+      "attitudeToStrangers": "hostile",
+      "tradeGoods": [
+        "fuel",
+        "ammunition",
+        "canned food"
+      ],
+      "wants": [
+        "medicine",
+        "information on other survivors",
+        "working radios"
+      ],
+      "radioFreq": "91.100",
+      "speechStyle": "Clipped, procedural, borrowed military jargon; they call everyone 'civilian'."
+    },
+    {
+      "id": "f2",
+      "name": "Reach Mutual Aid",
+      "ideology": "Nobody is turned away. Share what you have and pray.",
+      "goal": "Shelter and feed anyone who comes to Blackwater in peace, and keep the fever out.",
+      "secret": "Pastor Tom, who leads them, is infected and hiding it. The fever is already inside the camp.",
+      "strength": 2,
+      "baseLocationId": "loc9",
+      "attitudeToStrangers": "welcoming",
+      "tradeGoods": [
+        "clean water",
+        "vegetables",
+        "bandages"
+      ],
+      "wants": [
+        "medicine",
+        "fuel",
+        "willing hands"
+      ],
+      "radioFreq": "7.200",
+      "speechStyle": "Warm, careful, a little churchy; they say 'friend' and mean it."
+    }
+  ],
+  "npcs": [
+    {
+      "id": "n1",
+      "name": "Maya Okonkwo",
+      "age": 38,
+      "background": "An emergency nurse at St. Brennan who walked out on the second day when the Wardens started turning the sick away at gunpoint. She has been living in the pharmacy's back office, treating whoever comes, running out of everything. Her sister is diabetic and somewhere across the bridge.",
+      "personality": "Steady, dry, allergic to speeches; she shows care by doing.",
+      "speechStyle": "Short clinical sentences, medical shorthand, swears quietly under stress, calls people by their full names.",
+      "skills": [
+        "medicine"
+      ],
+      "secret": "She left patients on the fourth floor to die when she walked out and cannot forgive herself.",
+      "loyaltyTendency": "loyal",
+      "breakingPoint": "Being asked to leave someone sick behind.",
+      "betrayal": null,
+      "locationId": "loc2",
+      "factionId": null,
+      "initialDisposition": "friendly",
+      "wants": "To get back into the hospital pharmacy for insulin, and someone to watch her back while she does.",
+      "knownToSurvivor": true,
+      "relationToSurvivor": "the nurse at the corner pharmacy; you nod to each other in the queue most weeks"
+    },
+    {
+      "id": "n2",
+      "name": "Rico Delgado",
+      "age": 27,
+      "background": "A delivery driver who became a smuggler on Day 2, running people and goods past the checkpoint for whatever they had. He knows every back road, culvert and creek crossing in the Reach, and he has already done one thing he will not talk about.",
+      "personality": "Charming, restless, generous with other people's things.",
+      "speechStyle": "Fast, joking, lots of 'listen' and 'trust me', goes quiet when the subject turns to the Wardens.",
+      "skills": [
+        "scavenging",
+        "stealth"
+      ],
+      "secret": "He sold a family's hiding place to the Wardens for a tank of gas.",
+      "loyaltyTendency": "fickle",
+      "breakingPoint": "Hunger. He has been hungry before and will not be again.",
+      "betrayal": {
+        "will": true,
+        "trigger": {
+          "kind": "foodDaysBelow",
+          "value": 2,
+          "factionId": null,
+          "flag": null
+        },
+        "how": "waits for a night watch, takes the best of the food, the medicine and the rifle if there is one, and is gone by dawn",
+        "effect": "steal"
+      },
+      "locationId": "loc3",
+      "factionId": null,
+      "initialDisposition": "wary",
+      "wants": "Food, fuel and a way across the bridge that does not end with him in a pen.",
+      "knownToSurvivor": false,
+      "relationToSurvivor": null
+    },
+    {
+      "id": "n3",
+      "name": "Dee Halvorsen",
+      "age": 45,
+      "background": "Marina mechanic, twenty years keeping other people's boats running. Her son went to the fairgrounds relief point on Day 3 and has not come back; the Wardens tell her he is fine and working. She believes them because she has to.",
+      "personality": "Practical, blunt, loyal to whoever can bring her son home.",
+      "speechStyle": "Flat Pacific Northwest, engine metaphors, no wasted words, answers questions with questions.",
+      "skills": [
+        "mechanics"
+      ],
+      "secret": "She reports survivors' movements to the Wardens in exchange for news of her son.",
+      "loyaltyTendency": "steady",
+      "breakingPoint": "Learning what the fairgrounds really is.",
+      "betrayal": {
+        "will": true,
+        "trigger": {
+          "kind": "factionStandingBelow",
+          "value": -30,
+          "factionId": "f1",
+          "flag": null
+        },
+        "how": "radios the Wardens the group's next move from the marina; the road is watched",
+        "effect": "lure"
+      },
+      "locationId": "loc5",
+      "factionId": null,
+      "initialDisposition": "friendly",
+      "wants": "Word of her son, and spare parts for the marina's generator.",
+      "knownToSurvivor": false,
+      "relationToSurvivor": null
+    },
+    {
+      "id": "n4",
+      "name": "Annie Kolar",
+      "age": 61,
+      "background": "A fisherwoman who has run the Marit out of Port Hollis for thirty years. The Wardens shot her brother at the marina on Day 5 for refusing to hand over his diesel. She moved the boat to Dunmore Cove that night and has been waiting for the blockade to move ever since.",
+      "personality": "Weathered, suspicious, fair; she judges people by what they do with their hands.",
+      "speechStyle": "Slow, salt-dry, marine radio cadence, says 'copy' and 'out', never raises her voice.",
+      "skills": [
+        "survival"
+      ],
+      "secret": "The Marit can make the crossing to the capital with two cans of diesel, and she will only take people she trusts.",
+      "loyaltyTendency": "loyal",
+      "breakingPoint": "A lie. Any lie.",
+      "betrayal": null,
+      "locationId": "loc8",
+      "factionId": null,
+      "initialDisposition": "wary",
+      "wants": "Diesel, and someone who does not lie to her.",
+      "knownToSurvivor": false,
+      "relationToSurvivor": null
+    },
+    {
+      "id": "n5",
+      "name": "Pastor Tom Ekwueme",
+      "age": 52,
+      "background": "The pastor of a small Methodist congregation who opened the church camp at Blackwater to anyone on Day 2 and has kept it fed and calm since. He is the reason Reach Mutual Aid exists. He has been running a fever for a week and tells himself it is exhaustion.",
+      "personality": "Gentle, stubborn, a natural leader who hates being one.",
+      "speechStyle": "Measured, scriptural without quoting, asks how you are and listens to the answer.",
+      "skills": [
+        "leadership",
+        "negotiation"
+      ],
+      "secret": "He is infected and knows it.",
+      "loyaltyTendency": "steady",
+      "breakingPoint": "Being forced to choose who stays and who goes.",
+      "betrayal": null,
+      "locationId": "loc9",
+      "factionId": "f2",
+      "initialDisposition": "friendly",
+      "wants": "Medicine, quietly, and no questions about the scarf.",
+      "knownToSurvivor": false,
+      "relationToSurvivor": null
+    },
+    {
+      "id": "n6",
+      "name": "Jonah 'Sparks' Lee",
+      "age": 24,
+      "background": "A Meridian intern who was left behind when the helicopters took the senior staff. He kept the campus radio room running for the convoy's traffic and knows the collection schedule by heart. He is terrified of being found by either side and will say whatever keeps him alive.",
+      "personality": "Clever, jumpy, eager to please, a liar when scared.",
+      "speechStyle": "Rapid technical chatter, 'basically', 'okay so', trails off, laughs at the wrong moments.",
+      "skills": [
+        "electronics"
+      ],
+      "secret": "He ran the convoy's radio traffic for Meridian and knows the collection schedule.",
+      "loyaltyTendency": "treacherous",
+      "breakingPoint": "A direct threat from anyone armed.",
+      "betrayal": {
+        "will": true,
+        "trigger": {
+          "kind": "dayAfter",
+          "value": 14,
+          "factionId": null,
+          "flag": null
+        },
+        "how": "slips away toward the fairgrounds to rejoin Meridian's people and tells them where the group sleeps",
+        "effect": "defect"
+      },
+      "locationId": "loc6",
+      "factionId": null,
+      "initialDisposition": "desperate",
+      "wants": "Protection, batteries, and to never be asked what he did at Meridian.",
+      "knownToSurvivor": false,
+      "relationToSurvivor": null
+    }
+  ],
+  "threat": {
+    "name": "the fevered and the Wardens who police them",
+    "nature": "Harrow fever: a fast respiratory infection. In the second stage carriers are feverish, confused and sometimes violent, and they bleed. The Wardens shoot carriers on sight and detain everyone else.",
+    "behavior": "Carriers wander toward light, warmth and voices, especially at night, and gather where there are many of them. Wardens patrol the roads by day in pairs with rifles, hold the bridge after dark, and run collection trucks to the fairgrounds.",
+    "weaknesses": [
+      "Distance and a mask: the fever does not cross ten metres of open air.",
+      "Carriers cannot climb and will not approach fire.",
+      "The Wardens will not enter the hospital after dark; they believe it is 'hot'."
+    ],
+    "escalation": [
+      "A second wave with far higher mortality around day 21.",
+      "The Wardens begin burning infected districts around day 26.",
+      "The capital falls silent near day 29."
+    ],
+    "nightMultiplier": 1.6,
+    "baseLevel": 1
+  },
+  "ending": {
+    "trueWayOut": {
+      "what": "Leave the Reach by sea aboard Annie Kolar's fishing boat, the Marit, from Dunmore Cove while the coast guard blockade is north",
+      "where": "loc8",
+      "windowStartDay": 18,
+      "windowEndDay": 24,
+      "requirements": [
+        {
+          "flag": "annie_trusts_you",
+          "description": "Annie Kolar trusts you enough to take you aboard",
+          "howToObtain": "Help her without lying to her: bring diesel for the Marit, or stand with her against the Wardens at the marina, or bring her word of the blockade schedule."
+        },
+        {
+          "flag": "has_diesel",
+          "description": "At least one jerrycan of diesel for the crossing",
+          "howToObtain": "Take it from the marina fuel shed or the truck stop, or trade for it with the Wardens. The GM sets this flag when the survivor holds diesel."
+        }
+      ],
+      "description": "A grey dawn, the Marit's old engine catching on the third try, the overhang sliding away behind, and the open water where the cutters used to be.",
+      "howItPlaysOut": "The crossing takes a day and a night. The capital is under a different kind of quarantine, but it is standing. The survivor's name goes on a list of people who got out of the Reach. There are nine names on it."
+    },
+    "clues": [
+      {
+        "id": "c1",
+        "text": "Dr. Osei's notes say the 'vaccine convoy' is collecting the sick for Meridian, not treating them; nobody who reports to the fairgrounds comes back.",
+        "source": {
+          "kind": "location",
+          "id": "loc4"
+        }
+      },
+      {
+        "id": "c2",
+        "text": "The coast guard patrol schedule shows the blockade moving north on day 18 for about a week; the water off Dunmore Cove will be open.",
+        "source": {
+          "kind": "location",
+          "id": "loc5"
+        }
+      },
+      {
+        "id": "c3",
+        "text": "Annie Kolar says the Marit can make the crossing with two cans of diesel, from Dunmore Cove, not the marina, where the Wardens watch.",
+        "source": {
+          "kind": "npc",
+          "id": "n4"
+        }
+      },
+      {
+        "id": "c4",
+        "text": "The survivor net repeats a fisherman's message: 'the eighteenth, north, a week' and 'the cove, not the harbour'.",
+        "source": {
+          "kind": "radio",
+          "id": "7.200"
+        }
+      },
+      {
+        "id": "c5",
+        "text": "A Meridian memo: Project Harrow was a sterilising agent that failed containment; the convoy exists to collect 'viable subjects'.",
+        "source": {
+          "kind": "location",
+          "id": "loc6"
+        }
+      }
+    ],
+    "falseHopes": [
+      {
+        "id": "fh1",
+        "promise": "The vaccination and evacuation convoy at the County Fairgrounds on day 15 will treat and evacuate everyone who reports.",
+        "source": "the official emergency channel and the Wardens' Reach Watch broadcasts",
+        "where": "loc7",
+        "whatReallyHappens": "Meridian sorts the arrivals. The sick are taken away as test subjects in sealed trucks; the healthy are kept as labour behind the livestock barns."
+      },
+      {
+        "id": "fh2",
+        "promise": "Blackwater Reservoir is a permanent safe haven with clean water, food and a doctor.",
+        "source": "Reach Mutual Aid's shortwave broadcasts and Pastor Tom himself",
+        "where": "loc9",
+        "whatReallyHappens": "Pastor Tom is infected and hiding it. The fever runs through the camp and it burns on the night of day 24."
+      }
+    ]
+  },
+  "radio": {
+    "channels": [
+      {
+        "freq": "162.400",
+        "kind": "government",
+        "owner": "Cascade Reach Emergency Management (automated)",
+        "schedule": {
+          "fromDay": 0,
+          "toDay": null,
+          "hours": []
+        },
+        "messages": [
+          {
+            "fromDay": 0,
+            "text": "This is the Cascade Reach emergency management network. Harrow fever cases are rising. Remain indoors. Boil all water. Do not approach checkpoints without identification. This message repeats.",
+            "truthful": true
+          },
+          {
+            "fromDay": 10,
+            "text": "Attention all residents of Cascade Reach. A vaccination and evacuation convoy will arrive at the County Fairgrounds on day fifteen. Report with identification. Bring only what you can carry. Families will be kept together. This message repeats.",
+            "truthful": false
+          },
+          {
+            "fromDay": 21,
+            "text": "...network... degraded... remain in... [tone]",
+            "truthful": true
+          }
+        ]
+      },
+      {
+        "freq": "91.100",
+        "kind": "faction",
+        "owner": "Reach Watch (the Wardens)",
+        "schedule": {
+          "fromDay": 4,
+          "toDay": null,
+          "hours": [
+            8,
+            12,
+            18,
+            20
+          ]
+        },
+        "messages": [
+          {
+            "fromDay": 4,
+            "text": "Reach Watch, Reach Watch. The bridge is secure under Warden control. Looters will be shot. Report the sick to any Warden post; they will be cared for. Civilians stay off the roads after dark.",
+            "truthful": false
+          },
+          {
+            "fromDay": 15,
+            "text": "Reach Watch. The convoy was a success. A second convoy is expected. Report to the fairgrounds for processing. Anyone hoarding fuel is stealing from the Reach and will be dealt with.",
+            "truthful": false
+          }
+        ]
+      },
+      {
+        "freq": "7.200",
+        "kind": "survivor",
+        "owner": "the Reach survivor net (shortwave)",
+        "schedule": {
+          "fromDay": 2,
+          "toDay": null,
+          "hours": [
+            5,
+            6,
+            21,
+            22,
+            23
+          ]
+        },
+        "messages": [
+          {
+            "fromDay": 2,
+            "text": "Anyone copy? Hollis is bad. Stay off the bridge. We're hearing the hospital still has the generator. Anyone with a nurse, the pharmacy on Harrow. Out.",
+            "truthful": true
+          },
+          {
+            "fromDay": 12,
+            "text": "Fisherman on the coast says the eighteenth, north, a week. He says the cove, not the harbour. Don't know what it means. Pass it on. Pass it on.",
+            "truthful": true
+          },
+          {
+            "fromDay": 20,
+            "text": "Don't go to the fairgrounds. Nobody who went came back. Don't go to the fairgrounds. If you have a boat, the water's open. Don't go to the fairgrounds.",
+            "truthful": true
+          }
+        ]
+      },
+      {
+        "freq": "156.800",
+        "kind": "survivor",
+        "owner": "Annie Kolar, fishing vessel Marit",
+        "schedule": {
+          "fromDay": 12,
+          "toDay": 24,
+          "hours": [
+            20,
+            21
+          ]
+        },
+        "messages": [
+          {
+            "fromDay": 12,
+            "text": "Any station, any station, this is the Marit. I need diesel, forty litres, and I'll take two people who can keep their mouths shut. Marina, north pontoon, after dark, no lights. Out.",
+            "truthful": true
+          }
+        ]
+      },
+      {
+        "freq": "1610",
+        "kind": "automated",
+        "owner": "Meridian Agrisciences site advisory (automated)",
+        "schedule": {
+          "fromDay": 0,
+          "toDay": null,
+          "hours": []
+        },
+        "messages": [
+          {
+            "fromDay": 0,
+            "text": "You are approaching a Meridian Agrisciences facility. This site is secure and fully staffed. Medical assistance is available at the County Fairgrounds relief point. Please proceed there. This message repeats.",
+            "truthful": false
+          }
+        ]
+      }
+    ]
+  },
+  "deadlineDay": 30
+}

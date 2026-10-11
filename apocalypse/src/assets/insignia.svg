@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Civil Continuity Directorate insignia">
+  <defs>
+    <path id="ring" d="M100,100 m-78,0 a78,78 0 1,1 156,0 a78,78 0 1,1 -156,0"/>
+  </defs>
+  <circle cx="100" cy="100" r="96" fill="none" stroke="currentColor" stroke-width="2"/>
+  <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" stroke-width="1" opacity=".6"/>
+  <text font-family="ui-monospace, monospace" font-size="10" letter-spacing="2" fill="currentColor">
+    <textPath href="#ring" startOffset="1%">EMERGENCY OPERATIONS · CIVIL CONTINUITY DIRECTORATE · </textPath>
+  </text>
+  <polygon points="100,42 143.3,67 143.3,117 100,142 56.7,117 56.7,67" fill="none" stroke="currentColor" stroke-width="2.5"/>
+  <polygon points="100,50 136.4,71 136.4,113 100,134 63.6,113 63.6,71" fill="none" stroke="currentColor" stroke-width="1" opacity=".5"/>
+  <line x1="100" y1="86" x2="100" y2="126" stroke="currentColor" stroke-width="3"/>
+  <line x1="88" y1="126" x2="112" y2="126" stroke="currentColor" stroke-width="3"/>
+  <line x1="100" y1="100" x2="90" y2="126" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+  <line x1="100" y1="100" x2="110" y2="126" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+  <path d="M88,86 a12,12 0 0,1 24,0" fill="none" stroke="currentColor" stroke-width="2"/>
+  <path d="M80,86 a20,20 0 0,1 40,0" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".75"/>
+  <path d="M72,86 a28,28 0 0,1 56,0" fill="none" stroke="currentColor" stroke-width="1" opacity=".5"/>
+  <circle cx="100" cy="86" r="3.5" fill="currentColor"/>
+  <g stroke="currentColor" stroke-width="1.5">
+    <line x1="100" y1="6" x2="100" y2="14"/><line x1="100" y1="186" x2="100" y2="194"/>
+    <line x1="6" y1="100" x2="14" y2="100"/><line x1="186" y1="100" x2="194" y2="100"/>
+  </g>
+  <line x1="62" y1="152" x2="138" y2="152" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="166" text-anchor="middle" font-family="ui-monospace, monospace" font-size="8.5" letter-spacing="3" fill="currentColor">ENDURE · ADAPT · REMAIN</text>
+</svg>
