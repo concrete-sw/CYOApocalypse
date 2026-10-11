@@ -27,13 +27,54 @@ function words(text) { const m = text.match(/Survivor(?: says)?:\s*"?([^"\n]*)"?
 const TRUNCATE = process.env.MOCK_TRUNCATE === '1';
 const CUT = Math.floor(sampleWorld.length * 0.6);
 
+// The sample world is written for a start on the day it begins. For other
+// start days the mock adjusts it the way a model would be asked to: signs
+// before day 0, more events and a later way-out window for a deep start.
+function worldFor(text) {
+  const m = text.match(/WHEN THE STORY STARTS: (\d+) days (BEFORE|AFTER)/);
+  const custom = text.includes('wrote their own background');
+  if (!m && !custom) return sampleWorld;
+  const n = m ? Number(m[1]) * (m[2] === 'BEFORE' ? -1 : 1) : 0;
+  const w = JSON.parse(sampleWorld);
+  if (custom) { w.survivor.title = 'tram driver'; w.survivor.skills = ['mechanics']; w.survivor.kit = [{ name: 'Depot keys', category: 'document' }, { name: 'Thermos', category: 'tool', qty: 1 }]; w.survivor.vehicle = null; }
+  if (n < 0) {
+    w.timeline.push({ day: n, hour: 8, event: 'A colleague texts about a coworker with a cough that will not shift.', doom: 1, visible: true, contact: false, effects: {} });
+    w.timeline.push({ day: -1, hour: 18, event: 'The pharmacy on the corner has a queue outside for the first time anyone can remember, and two people in it are wearing masks.', doom: 1, visible: true, contact: false, effects: {} });
+    w.deadlineDay += 0;
+  } else if (n > 0) {
+    const extra = [
+      { day: n + 2, hour: 11, event: 'The Wardens post a new list of names at the bridge.', doom: 4, visible: true, contact: false, effects: {} },
+      { day: n + 4, hour: 20, event: 'A woman\'s voice breaks radio silence: Annie Kolar of the Marit, asking anyone with diesel to meet her after dark.', doom: 4, visible: true, contact: true, effects: { radioFreq: '156.800' } },
+      { day: n + 6, hour: 3, event: 'Meridian\'s last helicopter lifts off from the campus with the convoy manifest.', doom: 4, visible: false, contact: false, effects: {} },
+      { day: n + 9, hour: 9, event: 'The coast guard blockade shifts north; the water off Dunmore Cove opens for a week.', doom: 4, visible: false, contact: false, effects: {} },
+      { day: n + 13, hour: 12, event: 'The Wardens begin burning the infected districts block by block.', doom: 5, visible: true, contact: false, effects: { threatDelta: 1 } },
+      { day: n + 17, hour: 8, event: 'The capital stops broadcasting. The emergency channel carries only a tone.', doom: 5, visible: true, contact: false, effects: {} }
+    ];
+    w.timeline.push(...extra);
+    w.ending.trueWayOut.windowStartDay = n + 9; w.ending.trueWayOut.windowEndDay = n + 15;
+    w.deadlineDay = Math.max(w.deadlineDay, n + 20);
+    const dm = text.match(/deadlineDay MUST be exactly (\d+)/); if (dm) w.deadlineDay = Number(dm[1]);
+    for (const c of w.radio.channels) for (const msg of c.messages) if (/eighteenth/.test(msg.text)) msg.fromDay = n + 1;
+  }
+  return JSON.stringify(w);
+}
+
 function reply(text, msgs) {
   if (text.includes('Reply with the single word READY')) return 'READY';
   if (text.includes('Continue EXACTLY from where it stopped')) {
     const partial = [...msgs].reverse().find(m => m.role === 'assistant')?.content || '';
     return { text: sampleWorld.slice(Math.max(0, partial.length - 24)), finish: 'stop' };
   }
-  if (text.includes('designing the hidden ground truth')) return TRUNCATE ? { text: sampleWorld.slice(0, CUT), finish: 'length' } : sampleWorld;
+  if (text.includes('designing the hidden ground truth')) return TRUNCATE ? { text: sampleWorld.slice(0, CUT), finish: 'length' } : worldFor(text);
+  if (text.includes('scripted timeline has run out')) {
+    const today = Number((text.match(/today is day (\d+)/) || [])[1] || 0);
+    const mk = (d, h, event, extra = {}) => ({ day: today + d, hour: h, event, doom: 4, visible: true, contact: false, effects: {}, ...extra });
+    return JSON.stringify({
+      timeline: [mk(1, 9, 'The Wardens pull back from the bridge to the fairgrounds; the road east is open and watched.'), mk(3, 14, 'A supply drop lands on the hospital roof and is gone by dark.', { visible: false }), mk(5, 20, 'A new voice on the survivor net asks for anyone who can run a boat.', { contact: true, effects: { radioFreq: '7.200' } }), mk(8, 6, 'Frost. The reservoir camp cabins are reoccupied by strangers.', { effects: { locationId: 'loc9', dangerDelta: 1 } }), mk(11, 12, 'The Reach Mutual Aid survivors regroup at the church and begin a count of the dead.'), mk(14, 9, 'The capital broadcasts a single schedule: convoys west, one a week, papers required.'), mk(18, 22, 'Something burns on the Meridian campus all night.', { visible: false }), mk(24, 8, 'The first snow.')],
+      radioMessages: [{ freq: '7.200', fromDay: today + 2, text: 'Net is up. Bridge is clear mornings. Anyone with a boat, call in. Out.', truthful: true }],
+      nextWayOut: null
+    });
+  }
   if (text.includes('survival game that has now ENDED')) {
     return JSON.stringify({
       epitaph: 'They kept moving when staying would have been easier, and they listened when the radio told the truth.',
@@ -54,9 +95,15 @@ function reply(text, msgs) {
   const encounterBegins = /ENCOUNTER BEGINS/.test(text);
   const encounterTail = encounterBegins ? '\n\nThen figures step out of the rain ahead of you, and everything stops. [What do you do?]' : '';
 
-  if (text.includes('[PROLOGUE: OPENING]')) return J('Rain on the fire escape. The neighbour\'s television is too loud again. You make coffee with the last of the milk and read a text about a sick coworker.\n\nOn the stairs the building manager is taping up a notice about the water. Outside, the pharmacy has a line.', { choices: ['Go down to the pharmacy', 'Check on the neighbour in 3B', 'Turn on the radio'] });
-  if (text.includes('[PROLOGUE: ORDINARY ACTION]')) return J(`You ${w.toLowerCase() || 'go about the morning'}. Nothing is wrong, exactly. A helicopter passes low over the port, heading inland, which it never does.`, { choices: ['Go down to the pharmacy', 'Call your sister', 'Pack a bag, just in case'] });
-  if (text.includes('[PROLOGUE: THE MOMENT]')) return J(`You ${w.toLowerCase() || 'head out'}, and at the corner of Harrow and Third a city bus stops in the middle of the intersection and does not move. The driver is slumped against the glass, coughing blood. Someone runs. Then everyone runs.\n\nA Guard truck comes up Third with a loudspeaker. The pharmacy window gives way under the crowd. A woman from the second floor falls and does not get up. Your phone buzzes once and loses signal.\n\nBy dark the streets are empty, then full of people carrying things.`, { choices: ['Run home and lock the door', 'Help the woman who fell', 'Grab what you can from the pharmacy'], changes: { vitals: { morale: -10 } } });
+  if (text.includes('[OPENING · ALREADY SURVIVING')) return J('You stand at the window of the flat with the last of the bottled water and count the days on the wall. The street is quiet in the way streets are now. Somewhere east a generator is running, which means someone has fuel.', { choices: ['Go down to the pharmacy', 'Check the roof', 'Listen for the generator'] });
+  if (/\[PROLOGUE: ORDINARY LIFE · /.test(text)) return J('Rain on the fire escape, the kettle, the cat that is not yours asking to be let out. A text from a colleague about a cough going round the ward. You have the night shift tonight and the whole grey day before it.', { choices: ['Go in early', 'Sleep before the shift', 'Walk down to Lindqvist\'s for milk'] });
+  if (/\[ACTION: WALKIE-TALKIE CALL/.test(text)) {
+    if (/npc n1/.test(text)) return J('[a click, then her voice, flat with static] "Copy. I hear you. Keep it short; these things carry."', { speaker: 'npc:n1', choices: ['Ask where she is', 'Tell her to come back'] });
+    return J('[static. a burst of someone else\'s traffic, far off, then nothing]', { speaker: 'radio' });
+  }
+  if (text.includes('[PROLOGUE: OPENING')) return J('Rain on the fire escape. The neighbour\'s television is too loud again. You make coffee with the last of the milk and read a text about a sick coworker.\n\nOn the stairs the building manager is taping up a notice about the water. Outside, the pharmacy has a line.', { choices: ['Go down to the pharmacy', 'Check on the neighbour in 3B', 'Turn on the radio'] });
+  if (text.includes('[PROLOGUE: ORDINARY ACTION')) return J(`You ${w.toLowerCase() || 'go about the morning'}. Nothing is wrong, exactly. A helicopter passes low over the port, heading inland, which it never does.`, { choices: ['Go down to the pharmacy', 'Call your sister', 'Pack a bag, just in case'] });
+  if (text.includes('[PROLOGUE: THE MOMENT')) return J(`You ${w.toLowerCase() || 'head out'}, and at the corner of Harrow and Third a city bus stops in the middle of the intersection and does not move. The driver is slumped against the glass, coughing blood. Someone runs. Then everyone runs.\n\nA Guard truck comes up Third with a loudspeaker. The pharmacy window gives way under the crowd. A woman from the second floor falls and does not get up. Your phone buzzes once and loses signal.\n\nBy dark the streets are empty, then full of people carrying things.`, { choices: ['Run home and lock the door', 'Help the woman who fell', 'Grab what you can from the pharmacy'], changes: { vitals: { morale: -10 } } });
   if (text.includes('[NEW SURVIVOR]')) return J('You have been surviving in the Reach since the start. Today you stand in the rain and decide to move.', { choices: ['Search the apartments', 'Head for the pharmacy'] });
 
   if (/\[ACTION: TRAVEL to location=loc2/.test(text)) return J(`${events}The pharmacy's front window is gone and the shelves are swept half bare. Glass crunches under your boots. A steel door at the back opens a crack and a woman with a nurse's watch looks you over.\n\n"If you're sick, stay there. If you're hurt, come in. If you're neither, say what you want."${encounterTail}`, encounterBegins ? {} : { choices: ['Talk to Maya', 'Search the pharmacy counter', 'Search the back office'], changes: { companionsMet: ['n1'], factsLearned: ['A nurse named Maya Okonkwo is holed up in the pharmacy back office.'] } });

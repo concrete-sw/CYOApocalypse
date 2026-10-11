@@ -31,7 +31,8 @@ export function registerShelter(app, { S, reg, readOnly }) {
             ['Raids', `${sh.raids} so far`],
             ['Stores', `${food} meals · ${water} water · ${sh.stash.length} item type${sh.stash.length === 1 ? '' : 's'}`]
           ]),
-          h('p', { class: 'muted small' }, 'Companions eat from the stash first. Cold nights burn one fuel or wood. Noise fades a step each quiet day; fights and building raise it. Defense lowers raid odds; a guard helps.'));
+          h('div', { class: 'chip-row' }, ['power', 'water', 'cell', 'internet'].map(k => tag(`${k === 'cell' ? 'phones' : k} ${s.utilities?.[k] ? 'on' : 'OFF'}`, s.utilities?.[k] ? 'ok' : 'bad'))),
+          h('p', { class: 'muted small' }, `${s.utilities?.water ? 'The taps run: you drink freely here. ' : ''}${s.utilities?.power ? 'The heating works and the fridge is cold. ' : 'No power: the fridge is a cupboard and fresh food is turning. '}While you are here and hungry you eat from the stores on your own. Companions eat from the stash first. Cold nights burn one fuel or wood. Noise fades a step each quiet day; fights and building raise it. Defense lowers raid odds; a guard helps.`));
         append(body, h('h3', {}, 'Stash'));
         if (!sh.stash.length) append(body, h('p', { class: 'muted small' }, 'Empty. Store items from the Inventory panel when you are here.'));
         else append(body, h('table', {}, h('tbody', {}, sh.stash.map(it => h('tr', {}, h('td', {}, `${it.name}${it.qty > 1 ? ` ×${it.qty}` : ''}`), h('td', { class: 'muted small' }, it.category), h('td', {}, here && !readOnly() ? btn('Take 1', () => app.withdraw(it.id, 1), 'small ghost') : null))))));

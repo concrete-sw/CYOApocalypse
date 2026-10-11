@@ -7,15 +7,16 @@ import { buildSummaryPrompt } from '../prompts/summary.js';
 import { extractJSON, extractPartialNarrative, looksTruncated } from './json.js';
 import { complete, completeWithMeta } from '../providers/index.js';
 import { clamp, asArray, num, str } from './util.js';
-import { dayOf, hourOf, phaseOf, isNight, formatTime, formatHM, formatDuration, MIN_PER_DAY, daysLeft } from './clock.js';
-import { addLog, addFact, queueEvent, takeEvents, applyChanges, advanceTime, checkEnd, endingAvailable, endingStatus, foundClue, retire, DOOM_LABEL } from './state.js';
+import { dayOf, hourOf, phaseOf, isNight, formatTime, formatHM, formatDuration, MIN_PER_DAY, daysLeft, formatStamp, formatLongDate, formatDate, collapseDay } from './clock.js';
+import { addLog, addFact, queueEvent, takeEvents, applyChanges, advanceTime, checkEnd, endingAvailable, endingStatus, foundClue, retire, DOOM_LABEL, timelineMinute, gearAvailable } from './state.js';
 import { diff, atShelter, warmthTarget } from './survival.js';
 import { conditions, describeInjuries } from './body.js';
 import { findItem, removeItem, itemValue, totalWeight, maxWeight, supplyDays } from './inventory.js';
 import { withPlayer, away, loyaltyLabel, adjustLoyalty, recordSaid, assign, skillCount, isGuarding, companion } from './companions.js';
 import { standingLabel, holderOf } from './factions.js';
 import { claimShelter, abandonShelter, fortify, shelterSummary } from './shelter.js';
-import { tune, scan, knowFreq, freqLabel, scheduleText, logRadio } from './radio.js';
+import { tune, scan, knowFreq, freqLabel, scheduleText, logRadio, walkieReach } from './radio.js';
+import { buildBriefing, briefingText } from './briefing.js';
 import { rollTravel, scavengeBudget, applyDepletion, resolveEncounter, classifyApproach, encounterChoices, makeEncounter } from './encounters.js';
 import { getLocation, getNpc, getFaction, getClue, locState, effectiveDanger, isKnown } from './world.js';
 
@@ -35,9 +36,15 @@ export function buildStateSnapshot(state) {
   const loc = getLocation(state, state.location); const ls = locState(state, state.location);
   const holder = holderOf(state, state.location);
   const sup = supplyDays(state);
+  const gear = gearAvailable(state);
   return {
-    survivor: { name: state.survivor.name, background: state.survivor.background, skills: state.survivor.skills },
-    day: dayOf(m), time: formatHM(m), phase: phaseOf(m), weather: state.weather.today?.label, deadlineDay: state.clock.deadlineDay, daysLeft: daysLeft(state),
+    survivor: { name: state.survivor.name, background: state.survivor.title || state.survivor.background, backgroundNotes: state.survivor.text || undefined, skills: state.survivor.skills },
+    day: dayOf(m), date: formatLongDate(state, m), time: formatHM(m), phase: phaseOf(m), weather: state.weather.today?.label, deadlineDay: state.clock.deadlineDay, daysLeft: daysLeft(state), openEnded: state.clock.deadlineDay == null, deadlinePassed: state.deadlinePassed ?? null,
+    collapseDay: collapseDay(state, m), chapter: state.chapter || 1,
+    utilities: { ...state.utilities }, home: getLocation(state, state.home)?.name || null,
+    gear: { radio: gear.radio, walkieTalkie: gear.walkie, workingPhone: gear.phone, vehicle: gear.vehicle ? gear.vehicle.item.name : null },
+    peopleKnownBefore: asArray(t.npcs).filter(n => n.knownToSurvivor).map(n => `${n.id} ${n.name}${n.relationToSurvivor ? ` (${n.relationToSurvivor})` : ''}`),
+    history: state.worldEvents.filter(e => e.history).slice(-8).map(e => `${formatDate(state, e.at)}: ${e.text}`),
     doom: `${state.doom}/5 ${DOOM_LABEL[state.doom]}`, threatLevel: state.threat.level, gamePhase: state.phase,
     vitals: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, Math.round(x)])), hazardName: t.apocalypse?.hazardName, conditions: conditions(state),
     injuries: describeInjuries(state), illness: state.body.illness ? `${state.body.illness.name} (severity ${state.body.illness.severity}${state.body.illness.treated ? ', treated' : ''})` : null,
@@ -66,17 +73,24 @@ function onPlayStart(state) {
 function preResolve(state, action) {
   const pre = { minutes: 0, tickCtx: {}, allowGmTime: false, deathPossible: state.vitals.health < 35, budget: null, locationId: state.location, encounterResult: null, theMoment: false };
   const d = diff(state);
+  const S = Math.round(num(state.truth.startOffset, 0));
   if (state.phase === 'prologue') {
     pre.deathPossible = false;
-    if (action.type === 'prologue_start') { pre.minutes = 0; return pre; }
-    pre.minutes = 20;
-    if (state.prologueTurns >= 1) {
-      pre.theMoment = true;
-      const first = state.truth.timeline?.[0];
-      if (first) { const at = num(first.day, 0) * MIN_PER_DAY + num(first.hour, 9) * 60; if (at > state.clock.minutes) pre.minutes = at - state.clock.minutes; }
+    if (action.type === 'prologue_start' || action.type === 'opening') { pre.minutes = 0; return pre; }
+    if (S === 0) {
+      // The morning it begins: one ordinary turn, then the clock runs to the inciting event.
+      pre.minutes = 20;
+      if (state.prologueTurns >= 1) {
+        pre.theMoment = true;
+        const first = state.truth.timeline?.[state.truth.incitingIndex ?? 0];
+        if (first) { const at = timelineMinute(first); if (at > state.clock.minutes) pre.minutes = at - state.clock.minutes; }
+      }
+      return pre;
     }
-    return pre;
+    // Before it begins: ordinary life runs on the ordinary rules below; the moment comes when the inciting event fires.
+    pre.prologueLife = true;
   }
+  if (action.type === 'opening') { pre.minutes = 0; pre.deathPossible = false; return pre; }
   if (state.encounter && !state.encounter.resolved) {
     const approach = action.approach || classifyApproach(action.text || '');
     pre.encounterResult = resolveEncounter(state, approach);
@@ -127,6 +141,7 @@ function preResolve(state, action) {
       const c = state.companions[action.npcId];
       if (it && c) {
         removeItem(state.inventory.items, it.id, 1);
+        if (it.tags.includes('walkie')) c.hasWalkie = true;
         pre.loyaltyGain = Math.min(10, Math.max(2, Math.round(itemValue({ ...it, qty: 1 }) / 2)));
         adjustLoyalty(state, action.npcId, pre.loyaltyGain); c.mood = 'grateful';
         if (it.category === 'medical' && c.hurt > 0) c.hurt--;
@@ -135,6 +150,7 @@ function preResolve(state, action) {
       pre.minutes = 5;
       break;
     }
+    case 'call': { pre.call = walkieReach(state); pre.minutes = 5; break; }
     case 'tune': { pre.tune = tune(state, action.freq); pre.minutes = 30; break; }
     case 'scan': { const ch = scan(state); pre.scan = ch; pre.minutes = 45; if (ch) { knowFreq(state, ch.freq); pre.tune = tune(state, ch.freq); } break; }
     case 'fortify': { pre.fortify = fortify(state); pre.minutes = pre.fortify.ok ? pre.fortify.minutes : 0; break; }
@@ -148,13 +164,18 @@ function preResolve(state, action) {
     case 'end': pre.minutes = 0; break;
     default: pre.minutes = 15; pre.allowGmTime = true;
   }
+  if (pre.prologueLife) {
+    // Ordinary life: no ambushes, raids or disturbances before the world has broken.
+    pre.allowGmTime = true; pre.deathPossible = false;
+    state.encounter = null; if (pre.travel) pre.travel.encounter = null; if (pre.budget) pre.budget.disturbance = null;
+  }
   return pre;
 }
 
 /** Skip ahead to the next thing that matters: an event, a returning companion, a change of light, or hunger. At most 12 hours. */
 function skipAheadMinutes(state) {
   const now = state.clock.minutes; let next = now + 12 * 60;
-  (state.truth.timeline || []).forEach((e, i) => { if (state.events.fired.includes(i)) return; const at = num(e.day, 0) * MIN_PER_DAY + num(e.hour, 9) * 60; if (at > now && at < next) next = at; });
+  (state.truth.timeline || []).forEach((e, i) => { if (state.events.fired.includes(i)) return; const at = timelineMinute(e); if (at > now && at < next) next = at; });
   for (const p of state.pending) if (p.readyAt > now && p.readyAt < next) next = p.readyAt;
   const dayStart = Math.floor(now / MIN_PER_DAY) * MIN_PER_DAY;
   for (const b of [5, 7, 18, 21]) { const cand = dayStart + b * 60; if (cand > now && cand < next) next = cand; }
@@ -169,19 +190,38 @@ export function describeAction(state, action, pre, events, notices) {
   const lines = [];
   const words = (action.text || '').trim();
   const loc = getLocation(state, state.location);
-  const time = `${formatTime(state.clock.minutes)} (${phaseOf(state.clock.minutes)})`;
+  const time = formatStamp(state);
   const weather = state.weather.today?.label || '';
-  if (state.phase === 'prologue') {
-    if (action.type === 'prologue_start') lines.push('[PROLOGUE: OPENING] Narrate the survivor\'s ordinary Day 0 morning from the truth\'s prologue.ordinaryMorning: home, routine, the people in their life. Nothing is wrong yet, though one small detail may feel off. End with the survivor about to do something ordinary and offer 2-3 ordinary choices.');
-    else if (pre.theMoment) lines.push(`[PROLOGUE: THE MOMENT] The survivor does: "${words}". While they do it, the world breaks. Narrate truth.prologue.theMoment and then the first hours (prologue.firstHours) as one tight, frightening, grounded scene, 180-300 words. It is now ${time}. End with the survivor forced into a first real survival decision and offer 2-4 choices. After this turn the game proper begins; the situation report will be posted automatically, so do not read it out.`);
-    else lines.push(`[PROLOGUE: ORDINARY ACTION] The survivor does: "${words}". Keep the day ordinary; something small may be slightly wrong (a siren far off, a headline, a dropped call, a neighbour who left early). Offer 2-3 ordinary choices. 80-160 words.`);
+  const S = Math.round(num(state.truth.startOffset, 0));
+  const moment = !!pre.theMoment || events.some(e => e.inciting);
+  if (state.phase === 'prologue' && (action.type === 'prologue_start' || moment || S === 0)) {
+    if (moment) {
+      const inc = state.truth.timeline?.[state.truth.incitingIndex ?? 0];
+      lines.push(`[PROLOGUE: THE MOMENT · it is ${time}, ${weather}] ${words ? `The survivor was doing this: "${words}".` : 'The survivor is going about their day.'} While they do it, the world breaks. Inciting event (it happened at ${inc ? formatHM(timelineMinute(inc)) : 'this hour'}): "${inc?.event || ''}". Narrate how they notice (truth.prologue.howTheyNotice), then truth.prologue.theMoment and the first hours (prologue.firstHours) as one tight, frightening, grounded scene in their own life, 200-320 words. End with the survivor forced into a first real survival decision and offer 2-4 choices. After this turn the game proper begins; the situation report will be posted automatically, so do not read it out.`);
+      const others = events.filter(e => !e.inciting && !e.silent);
+      if (others.length) lines.push(`Also happening: ${others.map(e => e.text).join(' | ')}`);
+      return lines.join('\n');
+    }
+    if (action.type === 'prologue_start') {
+      if (S < 0) lines.push(`[PROLOGUE: ORDINARY LIFE · ${time} · ${weather}] This is the first scene. Narrate the start of an ordinary day from truth.survivor.lifeBefore and truth.prologue.ordinaryLife: home, routine, the people in the survivor's life (the npcs with knownToSurvivor true). Nothing is wrong and nothing is foreshadowed. End with the survivor about to do something ordinary and offer 2-3 ordinary choices (work, errands, people). 150-250 words.`);
+      else lines.push(`[PROLOGUE: OPENING · ${time} · ${weather}] Narrate the survivor's ordinary morning from the truth's prologue.ordinaryLife and survivor.lifeBefore: home, routine, the people in their life. Nothing is wrong yet, though one small detail may feel off. End with the survivor about to do something ordinary and offer 2-3 ordinary choices. 150-250 words.`);
+      return lines.join('\n');
+    }
+    lines.push(`[PROLOGUE: ORDINARY ACTION · ${time}] The survivor does: "${words}". Keep the day ordinary; something small may be slightly wrong (a siren far off, a headline, a dropped call, a neighbour who left early). Offer 2-3 ordinary choices. 80-160 words.`);
     return lines.join('\n');
   }
+  if (action.type === 'opening') {
+    const b = buildBriefing(state);
+    lines.push(`[OPENING · ALREADY SURVIVING · ${time} · ${weather}] This is the first scene of a game that begins ${S} days into the collapse. The survivor has read the dossier below. Open on where they stand right now (${loc?.name}), what the last ${S} days have cost, the state of their home, their pack and the people around them, and the first real decision. 180-300 words, 2-4 choices. Do not read the dossier back to them.\nDOSSIER:\n${briefingText(b)}`);
+    return lines.join('\n');
+  }
+  if (state.phase === 'prologue') lines.push(`[PROLOGUE: ORDINARY LIFE CONTINUES · collapse day ${collapseDay(state)}] The world is still ordinary: power, water, phones, shops and money all work (see utilities). Keep it so. If an EVENT fired, it is a small sign: weave it in once, lightly, without explanation. Ordinary choices; move time with timeMinutes (an errand 60-120, a working shift up to 480, a night's sleep with "resting": true). Do not start the collapse yourself.`);
   if (events.length) {
     lines.push('[EVENTS SINCE THE LAST TURN: they already happened and the state already reflects them. Weave them in, urgent ones first.]');
     for (const e of events) {
       if (e.silent) { lines.push(`- (background) ${e.text}`); continue; }
       let note = '';
+      if (e.kind === 'world' && e.index != null && state.truth.timeline?.[e.index]) { const at = timelineMinute(state.truth.timeline[e.index]); note += ` (at ${formatDate(state, at)} ${formatHM(at)})`; }
       if (e.kind === 'world' && !e.visible) note = ' (HIDDEN world event: the survivor does not witness it. Show it only through indirect signs if anything would reach them: distant smoke, a radio fragment, a rumour, an unusual silence. Otherwise leave it out.)';
       if (e.urgent) note += ' (URGENT: open with this.)';
       if (e.contact) note += ` (RADIO CONTACT: a named voice reaches the survivor${e.radioFreq ? ` on ${e.radioFreq}` : ''}, speaking in first person, wanting something time-critical. Speaker "radio". Hold the scene on the contact until the survivor answers; offer choices about how to answer.)`;
@@ -202,7 +242,7 @@ export function describeAction(state, action, pre, events, notices) {
   switch (action.type) {
     case 'travel': {
       const t = pre.travel; const ls = locState(state, loc.id); const holder = holderOf(state, loc.id);
-      lines.push(`[ACTION: TRAVEL to location=${loc.id} ("${loc.name}") · about ${t.distance} km · took ${formatDuration(t.minutes)} · weather ${weather} · arriving ${time}]`);
+      lines.push(`[ACTION: TRAVEL to location=${loc.id} ("${loc.name}") · about ${t.distance} km${t.vehicle ? ` by ${t.vehicle}` : ' on foot'} · took ${formatDuration(t.minutes)} · weather ${weather} · arriving ${time}]`);
       lines.push(ls.visits <= 1 ? `First visit: describe the approach and the place as the truth describes it, with its sharpEyeDetails as things a careful eye notices (leads, not answers). ${holder ? `It is held by ${holder.name}.` : ''}` : `Return visit (${ls.visits}). Note what has changed.`);
       if (t.encounter) lines.push(encounterTail(t.encounter));
       if (words) lines.push(`Survivor: ${words}`);
@@ -234,6 +274,13 @@ export function describeAction(state, action, pre, events, notices) {
       const npc = getNpc(state, action.npcId);
       if (pre.giveItem) lines.push(`[ACTION: GIVE "${pre.giveItem.name}" to npc=${npc.id} ("${npc.name}")] The item has changed hands and loyalty rose by ${pre.loyaltyGain} (already applied). Narrate their reaction in character, briefly (40-100 words). Survivor: ${words || '(says nothing)'}`);
       else lines.push(`[ACTION: GIVE] The survivor meant to hand something over but has nothing matching. One line, in character.`);
+      break;
+    }
+    case 'call': {
+      const r = pre.call;
+      const who = [...r.companions.map(c => `npc ${c.id} ("${c.name}", about ${c.distance} km away at ${c.locationName}, carrying a paired unit)`), ...r.factions.map(f => `faction ${f.id} ("${f.name}", people within range)`), ...(r.stranger ? ['an unknown stranger listening on the same channel'] : [])];
+      lines.push(`[ACTION: WALKIE-TALKIE CALL · range about ${r.rangeKm} km · now ${time}] Survivor transmits: "${words}"`);
+      lines.push(who.length ? `WHO CAN HEAR AND ANSWER: ${who.join('; ')}. Only these; answer in their voice, or with static if they choose not to.` : 'NOBODY is within range with a paired unit. Static, a far-off burst of someone else\'s traffic, nothing more. Speaker "radio".');
       break;
     }
     case 'tune': {
@@ -275,7 +322,7 @@ export function describeAction(state, action, pre, events, notices) {
     if (endingAvailable(state)) lines.push('NOTE: ENDING CONDITIONS ARE MET here and now. If the survivor takes the way out, set "escape": true and narrate the departure without revealing the hidden cause (the debrief will).');
     else { const es = endingStatus(state); if (es.atPlace) lines.push(`NOTE: this is the place of the true way out, but it is not open: ${es.missing.join('; ')}. Do not let them leave by it; show why it is not possible yet.`); }
   }
-  lines.push(`It is ${time}, ${weather}. DEATH POSSIBLE THIS TURN: ${pre.deathPossible ? 'yes' : 'no'}.`);
+  lines.push(`It is ${time}, ${weather}. Utilities: power ${state.utilities?.power ? 'on' : 'OFF'}, water ${state.utilities?.water ? 'on' : 'OFF'}, phones ${state.utilities?.cell ? 'on' : 'OFF'}, internet ${state.utilities?.internet ? 'on' : 'OFF'}. DEATH POSSIBLE THIS TURN: ${pre.deathPossible ? 'yes' : 'no'}.`);
   return lines.join('\n');
 }
 
@@ -297,6 +344,7 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
   const pre = preResolve(state, action);
   const noticesBefore = advanceTime(state, pre.minutes, pre.tickCtx);
   const events = takeEvents(state);
+  if (state.phase === 'prologue' && events.some(e => e.inciting)) pre.theMoment = true;
   const actionText = describeAction(state, action, pre, events, noticesBefore);
   const snapshot = buildStateSnapshot(state);
   // The truth rides in the system prompt so the long, unchanging prefix can be cached by the provider.
@@ -350,7 +398,7 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
   const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime };
   const notices = applyChanges(state, parsed.changes || {}, ctx);
   const resting = pre.allowGmTime && parsed.changes?.resting === true;
-  let extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, resting ? 720 : 240) : 0;
+  let extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, resting ? 720 : pre.prologueLife ? 480 : 240) : 0;
   if (ctx.travelMinutes) extra = Math.max(extra, ctx.travelMinutes);
   const noticesAfter = extra ? advanceTime(state, extra, resting ? { sleeping: true, camp: !atShelter(state) } : ctx.travelMinutes ? { exertion: true } : {}) : [];
 
@@ -362,6 +410,7 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
   if (action.type === 'talk' && action.npcId) recordSaid(state, action.npcId, action.text, parsed.narrative);
   if ((action.type === 'tune' || action.type === 'scan') && pre.tune?.kind === 'broadcast') logRadio(state, { freq: pre.tune.freq, text: pre.tune.message.text, owner: pre.tune.channel.owner, kind: pre.tune.channel.kind, truthful: pre.tune.message.truthful !== false });
   else if (action.type === 'tune' && pre.tune && pre.tune.kind !== 'invalid') logRadio(state, { freq: pre.tune.freq, text: pre.tune.kind === 'static' ? 'static' : 'carrier / dead air', kind: pre.tune.kind });
+  else if (action.type === 'call') logRadio(state, { freq: null, kind: 'call', text: `"${action.text}" · ${parsed.narrative.slice(0, 240)}` });
   addLog(state, action.type, parsed.narrative, speaker, { events: events.filter(e => !e.silent).map(e => e.text), urgent: events.some(e => e.urgent), survivorLine: action.text || null });
   state.history.push({ role: 'user', content: actionText }, { role: 'assistant', content: JSON.stringify({ narrative: parsed.narrative, speaker, choices: state.lastChoices, changes: parsed.changes || {} }) });
   state.turnCount += 1;
@@ -370,6 +419,7 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
     state.prologueTurns += 1;
     if (pre.theMoment) { state.phase = 'play'; onPlayStart(state); }
   }
+  if (action.type === 'opening') state.openingDone = true;
   if (action.type === 'end') retire(state);
 
   if (state.history.length > SUMMARIZE_AFTER * 2) {

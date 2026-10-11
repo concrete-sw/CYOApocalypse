@@ -103,11 +103,26 @@
           <select id="background"></select>
         </label>
         <p id="backgroundNotes" class="muted small"></p>
+        <label id="customBackgroundRow" class="hidden">Your job and background
+          <textarea id="customBackground" rows="3" maxlength="600" placeholder="Who are you? Job, age, health, family, habits. e.g. 'Long-haul truck driver, 52, divorced, bad back, drives a rig with a sleeper cab, keeps a dog.' The world is built around it."></textarea>
+        </label>
+        <label>Where you live <span class="muted">(blank = somewhere random)</span>
+          <input id="homePlace" type="text" maxlength="120" placeholder="e.g. Lisbon, Portugal · a farm outside Bozeman, Montana · Osaka">
+        </label>
         <label>The apocalypse
           <select id="apocalypseType"></select>
         </label>
         <label id="customPremiseRow" class="hidden">Your premise
           <textarea id="customPremise" rows="2" placeholder="Describe how the world ends. A sentence or two is enough."></textarea>
+        </label>
+        <label>When your story starts
+          <select id="gameStart">
+            <option value="before" selected>Before it begins (ordinary life, warning signs)</option>
+            <option value="onset">The day it begins</option>
+            <option value="early">About a week in (society failing)</option>
+            <option value="deep">Weeks in (the collapse is old news)</option>
+            <option value="random">Random</option>
+          </select>
         </label>
         <label>Difficulty
           <select id="difficulty">
@@ -118,11 +133,24 @@
         </label>
         <label>Length
           <select id="gameLength">
-            <option value="short">Short: 14 days</option>
-            <option value="standard" selected>Standard: 30 days</option>
-            <option value="long">Long: 60 days</option>
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="21">21 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="45">45 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+            <option value="120">120 days</option>
+            <option value="180">180 days</option>
+            <option value="365">A year</option>
+            <option value="custom">Custom…</option>
+            <option value="open">Open-ended: no deadline</option>
           </select>
         </label>
+        <label id="customLengthRow" class="hidden">Days
+          <input id="customLength" type="number" min="7" max="730" value="40">
+        </label>
+        <p class="muted small">Length sets the deadline: the day the way out of the region closes for good. Reaching it alive is not the goal; getting out is. If you are still standing when the deadline passes you choose: close the record, or keep surviving with no clock. Open-ended games have no deadline; the way out exists all the same.</p>
         <button class="btn primary" type="submit">Begin ▸</button>
         <p id="genStatus" class="muted small" role="status"></p>
         <button id="genCancel" class="btn ghost small hidden" type="button">Cancel</button>
@@ -161,7 +189,7 @@
   <div id="statusBar" class="statusbar" aria-hidden="true"></div>
   <form id="cmdBar" class="cmdbar" autocomplete="off">
     <label for="cmdInput" class="prompt">SURVIVOR&gt;</label>
-    <input id="cmdInput" type="text" placeholder="say what you do, or type a command. 'help' lists commands." spellcheck="false">
+    <input id="cmdInput" type="text" placeholder="type what you do and say. 'help' lists the shortcuts." spellcheck="false">
     <button class="btn small" type="submit">Act</button>
   </form>
 </section>

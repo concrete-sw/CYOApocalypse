@@ -44,6 +44,13 @@ export class WindowManager {
 
   isOpen(id) { return this.open.has(id); }
 
+  /** Panels that depend on gear (the radio) appear in the dock only while the gear is there; an open window closes when it goes. */
+  setAvailable(id, on) {
+    const b = this.dock.querySelector(`[data-win="${id}"]`);
+    if (b) b.classList.toggle('unavailable', !on);
+    if (!on && this.open.has(id)) this.close(id);
+  }
+
   toggle(id) {
     if (this.open.has(id)) {
       const w = this.open.get(id);

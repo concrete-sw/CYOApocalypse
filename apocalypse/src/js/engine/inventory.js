@@ -23,7 +23,11 @@ const TAG_RULES = [
   [/lighter|matches|flint|ferro|firestarter|fire starter/, 'fire'],
   [/rope|cord|paracord|wire|twine|cable|chain|strap|bungee/, 'cord'],
   [/plank|wood|lumber|board|scrap|sheet metal|nails|brick|sandbag|pallet|plywood|timber|concrete|rebar|fencing|barbed/, 'build'],
-  [/radio|walkie|scanner|transceiver|ham\b|receiver/, 'radio'],
+  [/walkie|two-way radio|handheld transceiver|\bfrs\b|\bpmr\b|\bgmrs\b/, 'walkie'],
+  [/radio|scanner|transceiver|ham\b|receiver/, 'radio'],
+  [/\bphone\b|smartphone|mobile|cellphone/, 'phone'],
+  [/car keys|van keys|truck keys|pickup|motorbike|motorcycle|\bcar\b|\bvan\b|\btruck\b/, 'vehicle'],
+  [/bicycle|\bbike\b|e-bike/, 'bike'],
   [/flashlight|torch|lantern|lamp|headlamp|glow ?stick/, 'light'],
   [/batter(y|ies)|power bank|power cell|solar charger/, 'battery'],
   [/alcohol|vodka|whisk|spirits|rubbing|disinfectant|antiseptic|bleach|peroxide|sanitizer|iodine tincture/, 'alcohol'],
@@ -48,6 +52,8 @@ export function inferTags(name, category) {
   if (category === 'fuel') tags.add('fuel');
   if (category === 'material') tags.add('build');
   if (category === 'clothing' && !tags.has('warm') && !tags.has('protective')) tags.add('cloth');
+  if (tags.has('walkie')) tags.delete('radio');   // a walkie-talkie talks to other walkies; it does not receive broadcasts
+  if (tags.has('vehicle')) tags.delete('bike');
   return [...tags];
 }
 
@@ -116,8 +122,9 @@ export function listWeight(list) { return Math.round(list.reduce((a, x) => a + x
 export function totalWeight(state) { return listWeight(state.inventory.items); }
 export function maxWeight(state) {
   const bg = BACKGROUNDS.find(b => b.id === state.survivor.background);
+  const carry = state.survivor.background === 'custom' ? clamp(num(state.survivor.carry, 0), -4, 6) : (bg?.carry || 0);
   const companions = Object.values(state.companions).filter(c => c.status === 'with').length;
-  return BASE_CARRY_KG + (bg?.carry || 0) + companions * 6;
+  return BASE_CARRY_KG + carry + companions * 6;
 }
 export function overweightFactor(state) { return totalWeight(state) / Math.max(1, maxWeight(state)); }
 
@@ -137,7 +144,7 @@ export function supplyDays(state) {
   return { food: Math.round(food / (2.5 * group) * 10) / 10, water: Math.round(water / (3 * group) * 10) / 10, foodUnits: food, waterUnits: water, group };
 }
 
-function foodEffect(item) {
+export function foodEffect(item) {
   const n = item.name.toLowerCase();
   if (/mre|ration pack|full meal|stew|feast/.test(n)) return 45;
   if (/can|canned|beans|soup|rice|pasta|meat|fish|bread|oats/.test(n)) return 30;
@@ -257,15 +264,92 @@ export const BACKGROUNDS = [
   { id: 'courier', name: 'Bike courier', skills: ['scavenging', 'stealth'], carry: 1, blurb: 'Fast, knows the shortcuts, travels light.', kit: [{ name: 'Bolt cutters', category: 'tool' }, { name: 'Rain poncho', category: 'clothing', tags: ['warm'] }, { name: 'Protein bars', category: 'food', qty: 2 }] },
   { id: 'student', name: 'Medical student', skills: ['medicine', 'electronics'], carry: -1, blurb: 'Half-trained in two useful things and sure of neither.', kit: [{ name: 'Textbook first aid kit', category: 'medical', tags: ['bandage'], qty: 2 }, { name: 'Laptop (dead)', category: 'electronics' }] }
 ];
+// What each background drives or rides in ordinary life (taken away by the story when roads jam or fuel runs out).
+const VEHICLES = { nurse: 'Car keys (hatchback, half a tank)', mechanic: 'Pickup keys (old, runs, quarter tank)', teacher: 'Car keys (estate, nearly full)', soldier: 'Pickup keys (half a tank)', teenager: 'Bicycle', retiree: 'Car keys (sedan, full tank)', farmer: 'Pickup keys (farm truck, full tank, mud to the sills)', engineer: 'Car keys (hatchback, quarter tank)', officer: 'Car keys (patrol car, half a tank)', cook: 'Bicycle', courier: 'Bicycle (fixed gear)', student: 'Bicycle' };
 const COMMON_KIT = [{ name: 'Water bottle', category: 'water' }, { name: 'Lighter', category: 'tool', tags: ['fire'] }, { name: 'Jacket', category: 'clothing', tags: ['warm'] }, { name: 'Granola bar', category: 'food' }];
+const EVERYDAY = [{ name: 'Phone', category: 'electronics', tags: ['phone'] }, { name: 'Wallet and keys', category: 'document' }, { name: 'Jacket', category: 'clothing', tags: ['warm'] }, { name: 'Water bottle', category: 'water' }];
+const HOME_FOOD = [['Dry pasta', 2], ['Bag of rice', 1], ['Canned soup', 2], ['Canned beans', 2], ['Cereal', 1], ['Bread', 1], ['Eggs', 1], ['Leftovers in the fridge', 1], ['Frozen meals', 2], ['Peanut butter', 1], ['Crackers', 1], ['Oatmeal', 1], ['Tinned fish', 2], ['Jar of jam', 1], ['Cheese', 1], ['Apples', 2], ['Instant noodles', 3], ['Biscuits', 1], ['Chocolate', 1], ['Milk', 1], ['Potatoes', 2], ['Canned tomatoes', 2]];
+const HOME_BASICS = [{ name: 'Painkillers', category: 'medical', qty: 6 }, { name: 'First aid kit', category: 'medical', tags: ['bandage'], qty: 2 }, { name: 'Flashlight', category: 'tool', tags: ['light'] }, { name: 'Batteries', category: 'electronics', tags: ['battery'], qty: 4 }, { name: 'Matches', category: 'tool', tags: ['fire'] }, { name: 'Kitchen knife', category: 'weapon' }, { name: 'Duct tape', category: 'tool' }, { name: 'Towels', category: 'clothing', tags: ['cloth'], qty: 2 }, { name: 'Wool blanket', category: 'clothing', tags: ['warm'] }, { name: 'Candles', category: 'misc', qty: 4 }, { name: 'Bottled water', category: 'water', qty: 3 }];
+const HOME_MAYBE = [[0.45, { name: 'Kitchen radio', category: 'electronics', tags: ['radio'] }], [0.3, { name: 'Antibiotics (leftover course)', category: 'medical', tags: ['antibiotic'] }], [0.4, { name: 'Multitool', category: 'tool' }], [0.35, { name: 'Camping stove', category: 'tool', tags: ['fire'] }], [0.3, { name: 'Bottle of whisky', category: 'misc', tags: ['alcohol', 'comfort'] }], [0.55, { name: 'Power bank', category: 'electronics', tags: ['battery'] }], [0.22, { name: 'Walkie-talkies (pair)', category: 'electronics', tags: ['walkie'], qty: 2 }], [0.4, { name: 'Bleach', category: 'misc', tags: ['alcohol'] }], [0.3, { name: 'Rope', category: 'material', tags: ['cord'] }], [0.35, { name: 'Toolbox', category: 'tool' }], [0.3, { name: 'Sleeping bag', category: 'clothing', tags: ['warm'] }], [0.25, { name: 'Tent', category: 'tool' }]];
+const ROAD_FOOD = ['Canned beans', 'Tinned fish', 'Crackers', 'Instant noodles', 'Oatmeal', 'Peanut butter', 'Canned soup', 'Energy bars'];
 
+function kitFor(backgroundId, truth) {
+  if (backgroundId === 'custom') return asKit(truth?.survivor?.kit);
+  return (BACKGROUNDS.find(b => b.id === backgroundId) || BACKGROUNDS[0]).kit;
+}
+function asKit(list) {
+  return (Array.isArray(list) ? list : []).filter(x => x && (typeof x === 'string' || x.name)).slice(0, 4).map(x => (typeof x === 'string' ? { name: x } : { name: x.name, category: x.category, qty: clamp(Math.round(num(x.qty, 1)) || 1, 1, 6) }));
+}
+
+/**
+ * What the survivor starts with. Before the collapse (startDay <= 0) that is an
+ * ordinary home: a pantry and fridge, a medicine cabinet, the things in a
+ * kitchen drawer, the background's own possessions, and a vehicle for those
+ * who have one; the pack holds only what a person carries on a normal day.
+ * Days or weeks in (startDay > 0) it is a scavenger's pack and a thinned-out
+ * home. Returns { pack, stash }.
+ */
+export function startingKit({ background = 'nurse', truth = null, startDay = 0, rnd = Math.random } = {}) {
+  const pack = [], stash = [];
+  const kit = kitFor(background, truth);
+  const vehicle = background === 'custom' ? (truth?.survivor?.vehicle || null) : (VEHICLES[background] || null);
+  const chance = p => rnd() < p;
+  if (startDay <= 0) {
+    for (const spec of EVERYDAY) addItem(pack, spec);
+    if (vehicle) addItem(pack, { name: vehicle, category: /bicycle|bike/i.test(vehicle) ? 'tool' : 'document', weight: /bicycle|bike/i.test(vehicle) ? 0 : 0.1 });
+    const foods = [...HOME_FOOD].sort(() => rnd() - 0.5).slice(0, 7 + Math.floor(rnd() * 4));
+    for (const [name, qty] of foods) addItem(stash, { name, category: 'food', qty, condition: 100 });
+    for (const spec of HOME_BASICS) addItem(stash, spec);
+    for (const [p, spec] of HOME_MAYBE) if (chance(p)) addItem(stash, spec);
+    for (const spec of kit) addItem(stash, spec);
+    addItem(stash, { name: 'Lighter', category: 'tool', tags: ['fire'] });
+    return { pack, stash };
+  }
+  // Already surviving: the pack is what they have managed to keep.
+  const worn = () => 50 + Math.floor(rnd() * 35);
+  for (const spec of COMMON_KIT) addItem(pack, { ...spec, condition: worn() });
+  addItem(pack, { name: 'Phone (dead)', category: 'electronics', tags: ['phone'] });
+  const foods = [...ROAD_FOOD].sort(() => rnd() - 0.5).slice(0, startDay >= 14 ? 2 : 3);
+  for (const name of foods) addItem(pack, { name, category: 'food', condition: worn() });
+  addItem(pack, { name: 'Bottled water', category: 'water', qty: startDay >= 14 ? 1 : 2 });
+  addItem(pack, { name: 'Flashlight', category: 'tool', tags: ['light'], condition: worn() });
+  for (const spec of kit) addItem(pack, { ...spec, condition: worn() });
+  if (chance(startDay >= 14 ? 0.55 : 0.4)) addItem(pack, { name: 'Crowbar', category: 'weapon', condition: worn() });
+  if (chance(0.35)) addItem(pack, { name: 'Hand-crank radio', category: 'electronics', tags: ['radio'], condition: worn() });
+  if (chance(0.25)) addItem(pack, { name: 'Walkie-talkies (pair)', category: 'electronics', tags: ['walkie'], qty: 2, condition: worn() });
+  if (vehicle && /bicycle|bike/i.test(vehicle) && chance(0.6)) addItem(pack, { name: vehicle, category: 'tool', weight: 0 });
+  addItem(stash, { name: 'Canned beans', category: 'food', qty: startDay >= 14 ? 1 : 2 });
+  addItem(stash, { name: 'Bottled water', category: 'water' });
+  addItem(stash, { name: 'Candles', category: 'misc', qty: 2 });
+  addItem(stash, { name: 'Wool blanket', category: 'clothing', tags: ['warm'] });
+  return { pack, stash };
+}
+/** The pre-collapse kit alone, for callers that only need a pack (tests, older saves). */
 export function startingItems(backgroundId) {
   const bg = BACKGROUNDS.find(b => b.id === backgroundId) || BACKGROUNDS[0];
   const list = [];
   for (const spec of [...COMMON_KIT, ...bg.kit]) addItem(list, spec);
   return list;
 }
-export function backgroundSkills(backgroundId) { return (BACKGROUNDS.find(b => b.id === backgroundId) || BACKGROUNDS[0]).skills; }
+export function backgroundSkills(backgroundId, truth = null) {
+  if (backgroundId === 'custom') { const sk = (truth?.survivor?.skills || []).filter(x => typeof x === 'string'); return sk.length ? sk.slice(0, 2) : ['survival']; }
+  return (BACKGROUNDS.find(b => b.id === backgroundId) || BACKGROUNDS[0]).skills;
+}
+export function backgroundTitle(backgroundId, truth = null) {
+  if (backgroundId === 'custom') return str(truth?.survivor?.title, 'Civilian').slice(0, 60);
+  return (BACKGROUNDS.find(b => b.id === backgroundId) || BACKGROUNDS[0]).name;
+}
+
+// ------------------------------------------------------------------- gear
+export const hasRadio = list => list.some(x => x.tags.includes('radio'));
+export const hasWalkie = list => list.some(x => x.tags.includes('walkie'));
+export const hasPhone = list => list.some(x => x.tags.includes('phone') && !/dead/i.test(x.name));
+/** The vehicle in the pack, if any: { item, kind: 'motor' | 'bike' }. */
+export function vehicleOf(list) {
+  const motor = list.find(x => x.tags.includes('vehicle')); if (motor) return { item: motor, kind: 'motor' };
+  const bike = list.find(x => x.tags.includes('bike')); if (bike) return { item: bike, kind: 'bike' };
+  return null;
+}
 
 /** Best weapon rating: 0 none, 1-2 melee, 3 firearm with ammo, 1.5 firearm without. */
 export function weaponRating(list) {

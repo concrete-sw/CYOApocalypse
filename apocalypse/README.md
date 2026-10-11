@@ -20,9 +20,12 @@ insignia are invented, by the game or by the AI at the start of each run.
 3. On the logon screen pick your AI provider, paste your API key (see the
    table below for where to get one), click **Test connection**, then
    **Establish uplink**.
-4. Name your survivor, pick a background, pick the apocalypse, difficulty and
-   length, and click **Begin**. Building the world takes between thirty
-   seconds and a couple of minutes.
+4. Name your survivor, pick a background (or write your own), say where you
+   live (or leave it blank), pick the apocalypse, when your story starts,
+   difficulty and length, and click **Begin**. Building the world takes
+   between thirty seconds and a couple of minutes. Read the dossier that opens
+   the log: it says who you are, what day it is, what you own, who you know and
+   what, if anything, is going on.
 
 That is all. `index.html` is a single self-contained file: no install, no
 server, no build. It works in current Chrome, Edge, Firefox and Safari, on a
@@ -73,15 +76,24 @@ The **code owns the game state; the AI narrates and role-plays inside it.**
 
 1. **World generation.** One AI call produces a hidden *world truth* as JSON:
    the apocalypse and its real cause (which may differ from what people
-   believe), a day-by-day escalation timeline with events you cannot see yet,
-   8 to 12 locations with danger, resources, shelter quality and hidden things,
-   2 or 3 factions with goals and secrets, 6 to 8 survivors you can meet (each
-   with a voice, a secret, a loyalty tendency, a breaking point and whether and
-   how they will betray you), the hostile force and its weaknesses, the true
-   way out with its day window and requirements, at least 3 clues that reveal
-   it, 2 or 3 false hopes, and a deadline. The JSON is validated
-   (`src/js/engine/schema.js`) and regenerated with the errors fed back if it
-   is not playable.
+   believe), a day-by-day escalation timeline with events you cannot see yet
+   (each with the hour it happens and which utilities it takes down), 8 to 12
+   locations with danger, resources, shelter quality and hidden things, 2 or 3
+   factions with goals and secrets, 6 to 8 survivors you can meet (each with a
+   voice, a secret, a loyalty tendency, a breaking point and whether and how
+   they will betray you; at least one of them is someone from your own life),
+   your own life before it all (job, routine, home, the people around you),
+   the hostile force and its weaknesses, the true way out with its day window
+   and requirements, at least 3 clues that reveal it, 2 or 3 false hopes, a
+   calendar date, and a deadline. Every world is drawn from a different seed:
+   a variant of the apocalypse (an AI that stops deliveries is not the one that
+   locks the city down), how you first notice, what kind of place you live in,
+   the tone, and how the authorities behave, so two games of the same kind do
+   not tell the same story. The JSON is validated (`src/js/engine/schema.js`)
+   and regenerated with the errors fed back if it is not playable; any day
+   number or clock time the model writes inside an event is stripped and the
+   hour it named becomes the event's real hour, so the game clock and the
+   story never disagree.
 2. **Every GM turn** sends the GM system prompt, the truth, your current state
    (vitals, injuries, inventory, companions with mood and loyalty and what they
    said, location, day and weather, factions, facts, clues, flags), a rolling
@@ -94,10 +106,17 @@ The **code owns the game state; the AI narrates and role-plays inside it.**
    JSON is retried once, then shown as plain text with no state change.
 4. **The code runs the survival math.** Hunger, thirst, fatigue, warmth and
    the apocalypse-specific hazard meter tick on the clock; health drops when
-   they bottom out. Day and night, weather and the deadline advance. Travel
-   time and encounter risk, combat and escape, scavenging yields, radio
-   reception, companion upkeep, assignments and betrayals, shelter raids and
-   fuel are all decided by code; the GM is told the result and narrates it.
+   they bottom out. Day and night, weather, the calendar and the deadline
+   advance. Power, water, phones and the internet are up until a timeline
+   event takes them down; while the tap runs you drink from it, while the
+   fridge is cold your food keeps, and at home with a stocked pantry you eat
+   when you are hungry without being told to. Travel time (faster with the car
+   or the bike while you still have them), encounter risk, combat and escape,
+   scavenging yields, radio reception, walkie-talkie range, companion upkeep,
+   assignments and betrayals, shelter raids and fuel are all decided by code;
+   the GM is told the result and narrates it. The GM is also told the exact
+   day, date and time with every action and every event, and is forbidden to
+   state any other.
 5. **The truth is never shown** until the game ends (death, deadline, the way
    out, or you choose to end it). Then the debrief unseals everything: what was
    really going on, the full hidden timeline, what you got right, what you
@@ -108,8 +127,37 @@ companions with memories and opinions, factions with their own arcs, radio that
 sometimes lies, hints that cost, consequences that bite later) live in
 `src/js/prompts/gmSystem.js`. Read it; it is the heart of the game.
 
+## Starting your story
+
+**When it starts** is yours to choose. *Before it begins* (the default) gives
+you a few ordinary days: a job, a home with food in the fridge, running water,
+a working phone, people who know you, and small wrong things that you will
+only understand later. *The day it begins* opens on the morning of the
+inciting event. *About a week in* and *Weeks in* drop you into a collapse that
+is already old news, with a scavenger's pack, a thinned-out home, the history
+of what has happened on your dossier, and the grid most likely gone.
+
+**Who you are**: pick a background, or choose *Write your own* and describe
+your job, age, health, family and habits in a few lines; the world builder
+picks your skills and possessions from it and builds your street, your
+workplace and the people in your life around it. **Where you live** can be a
+real place ("Lisbon, Portugal", "a farm outside Bozeman, Montana"); the
+region is set there with invented streets and people.
+
+**Length** sets the deadline: the day the way out of the region closes for
+good. Reaching it alive is not the goal; getting out is. If you are still
+standing when the deadline passes you choose between closing the record
+(the debrief unseals the truth) and keeping on with no clock: the world then
+goes on, and when its scripted events run out the GM writes the next weeks of
+history for it. *Open-ended* games have no deadline from the start.
+
 ## Playing
 
+- **Dossier**: who you are, the date and time, where you live, what you own
+  and what is at home, the people in your life, which utilities still work,
+  what the public knows so far, and what the record is for. It opens the log
+  and lives in its own panel. Everything in it is built by the code from the
+  world, never improvised.
 - **Log**: the narrative, world events, the situation report, and the choice
   buttons. The choices are suggestions, not a menu: type anything at the
   `SURVIVOR>` prompt and the world attempts exactly what you describe, in
@@ -133,24 +181,33 @@ sometimes lies, hints that cost, consequences that bite later) live in
   the place, recover a cache.
 - **Shelter**: base or nomad. Defense, noise, stash, fortify, abandon. Bases
   can be raided at night; nomads are colder and rest worse.
-- **Radio**: tune a frequency or scan. Broadcasts keep schedules; some lie.
-  The way out is in there, in pieces.
+- **Radio**: exists only while you carry a radio (or sit at a shelter that
+  holds one): take the kitchen radio from home, find one, or trade for it.
+  Tune a frequency or scan. Broadcasts keep schedules; some lie. The way out
+  is in there, in pieces. A **walkie-talkie** is separate gear: hand the
+  paired unit to a companion and you can call them from a few kilometres
+  away, and anyone else listening nearby may answer.
 - **Journal**: clues and facts logged automatically, world events you have
   witnessed, your own notes.
 - **Factions**: who holds what, how they see you, what they trade and want.
 - **Settings**: four themes (green, amber, cold blue, red blackout),
   typewriter speed, reduce motion, scanlines, noise, contrast, five save slots,
   export and import as JSON, and "End my story".
-- **Clock**: time of day matters. Nights multiply danger. The deadline counts
-  down in the top bar and the alert chip changes colour as the world worsens.
+- **Clock**: the top bar carries the day, the calendar date and the time.
+  Time of day matters. Nights multiply danger. The deadline counts down (or
+  reads OPEN-ENDED, or NO CLOCK once you have chosen to go on past it) and the
+  alert chip changes colour as the world worsens.
 - **Debrief**: the outcome, a rating, the epitaph, the hidden story, the
-  timeline, the people, the factions, and the option to continue as a new
-  survivor in the same world, where everything you used up, built or broke
-  persists.
+  timeline, the people, the factions, and what comes next: after getting out,
+  **Continue the story** builds a new region of the same world around your
+  arrival, with your pack and whoever came with you (chapter two); or continue
+  as a new survivor in the same region, where everything you used up, built
+  or broke persists.
 
 Difficulty (Survivor, Hardened, Nightmare) changes how fast the clocks run,
 how much there is to find, how hostile strangers are, and how many companions
-will betray you. Length is 14, 30 or 60 days.
+will betray you. Length runs from 7 days to a year, any number in between,
+or open-ended.
 
 Keyboard: `/` focuses the command bar, `1` to `4` pick a choice, `Alt+1..9`
 opens panels, `Esc` closes the focused panel, `Tab` moves through everything,
@@ -190,10 +247,10 @@ apocalypse/
   src/assets/insignia.svg original fictional insignia (also inlined in the page)
   src/js/main.js          entry point
   src/js/providers/       AI provider adapters and registry
-  src/js/prompts/         GM system prompt, world generation, debrief, summary
-  src/js/engine/          schema, world generator, state, clock and weather, survival math,
-                          body, inventory and crafting, companions, factions, shelter, radio,
-                          encounters, GM turn loop, ending, storage
+  src/js/prompts/         GM system prompt, world generation, timeline extension, debrief, summary
+  src/js/engine/          schema, world generator, state, clock, calendar and weather, survival math,
+                          body, inventory and crafting, companions, factions, shelter, radio and
+                          walkie-talkies, encounters, GM turn loop, briefing (the dossier), ending, storage
   src/js/ui/              app controller, window manager, panels, body figure, map, typewriter
   dev/build.js            bundles src/ into index.html
   dev/mock-gm.js          offline mock GM for UI testing, with dev/sample-world.json
@@ -248,9 +305,11 @@ rest and stitches the halves together.
 
 The playthrough needs Playwright with Chromium (`npm i -g playwright && npx
 playwright install chromium`). It opens the built `index.html` over `file://`,
-plays through the prologue, travel, a companion, inventory, radio, shelter,
-save and load, tablet width, the ending and the debrief, and fails on any
-console error.
+plays through the dossier, the prologue, travel, a companion, inventory, the
+radio appearing when a radio is picked up, a walkie-talkie call, shelter, save
+and load, tablet width, the deadline passing and the record staying open, the
+timeline being extended, the way out, a second chapter, and the debrief, and
+fails on any console error.
 
 ## Content notes
 

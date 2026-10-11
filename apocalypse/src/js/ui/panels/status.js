@@ -4,7 +4,7 @@ import { h, append } from '../dom.js';
 import { tag, vitalBar, timeOf, btn } from './common.js';
 import { renderBody } from '../bodyFigure.js';
 import { REGION_LABEL, treatmentTagsFor, conditions } from '../../engine/body.js';
-import { formatTime, phaseOf, daysLeft } from '../../engine/clock.js';
+import { formatTime, phaseOf, daysLeft, formatDate, collapseDay } from '../../engine/clock.js';
 import { DOOM_LABEL } from '../../engine/state.js';
 import { getLocation } from '../../engine/world.js';
 
@@ -14,10 +14,12 @@ export function registerStatus(app, { S, reg, readOnly }) {
     render(body) {
       const s = S(); const v = s.vitals; const t = s.truth;
       const loc = getLocation(s, s.location);
-      const left = daysLeft(s);
+      const left = daysLeft(s); const cd = collapseDay(s);
+      const util = (k, label) => tag(`${label} ${s.utilities?.[k] ? 'on' : 'OFF'}`, s.utilities?.[k] ? 'ok' : 'bad');
       append(body,
-        h('div', { class: 'card-head', style: 'margin-bottom:4px' }, h('span', { class: `banner ${s.doom >= 4 ? 'bad' : s.doom >= 3 ? 'warn' : ''}` }, `DOOM ${s.doom}/5 · ${DOOM_LABEL[s.doom]}`), h('span', { class: 'muted small' }, `${formatTime(s.clock.minutes)} · ${phaseOf(s.clock.minutes)} · ${s.weather.today?.label || ''}`)),
-        h('p', { class: 'small muted', style: 'margin:0 0 6px' }, `${loc?.name || '?'}${s.shelter?.locationId === s.location ? ' (your shelter)' : ''} · ${s.mode === 'base' ? `base at ${getLocation(s, s.shelter.locationId)?.name}` : 'nomad'} · deadline day ${s.clock.deadlineDay}, ${left} day${left === 1 ? '' : 's'} left · threat ${s.threat.level}/5${(s.threat.local[s.location] || 0) > 0 ? ` (+${s.threat.local[s.location]} here)` : ''}`),
+        h('div', { class: 'card-head', style: 'margin-bottom:4px' }, h('span', { class: `banner ${s.doom >= 4 ? 'bad' : s.doom >= 3 ? 'warn' : ''}` }, s.phase === 'prologue' ? 'ROUTINE' : `DOOM ${s.doom}/5 · ${DOOM_LABEL[s.doom]}`), h('span', { class: 'muted small' }, `${formatTime(s.clock.minutes)} · ${formatDate(s)} · ${phaseOf(s.clock.minutes)} · ${s.weather.today?.label || ''}`)),
+        h('p', { class: 'small muted', style: 'margin:0 0 4px' }, `${loc?.name || '?'}${s.shelter?.locationId === s.location ? ' (your shelter)' : ''} · ${s.mode === 'base' ? `base at ${getLocation(s, s.shelter.locationId)?.name}` : 'nomad'} · ${left == null ? (s.deadlinePassed != null ? `past the deadline (day ${s.deadlinePassed})` : 'open-ended') : `deadline day ${s.clock.deadlineDay}, ${left} day${left === 1 ? '' : 's'} left`} · ${cd < 0 ? `${-cd} day${cd === -1 ? '' : 's'} before it begins (you do not know that)` : cd === 0 ? 'the day it begins' : `collapse day ${cd}`} · threat ${s.threat.level}/5${(s.threat.local[s.location] || 0) > 0 ? ` (+${s.threat.local[s.location]} here)` : ''}`),
+        h('div', { class: 'chip-row', style: 'margin:0 0 6px' }, util('power', 'power'), util('water', 'water'), util('cell', 'phones'), util('internet', 'internet')),
         h('div', { class: 'vitals two' },
           vitalBar('Health', v.health), vitalBar('Morale', v.morale), vitalBar('Hunger', v.hunger), vitalBar('Thirst', v.thirst),
           vitalBar('Fatigue', v.fatigue), vitalBar('Warmth', v.warmth), vitalBar(t.apocalypse?.hazardName || 'Hazard', v.hazard, { inverse: true })),

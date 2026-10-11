@@ -2,7 +2,9 @@
 
 import { pick } from './util.js';
 import { dayOf, hourOf } from './clock.js';
-import { skillCount } from './companions.js';
+import { skillCount, away } from './companions.js';
+import { getLocation, getNpc, getFaction, locState } from './world.js';
+import { distance } from './encounters.js';
 
 export function normalizeFreq(s) {
   const t = String(s ?? '').toLowerCase().replace(/mhz|khz|hz|\bfm\b|\bam\b|channel|ch\.?/g, '').replace(',', '.').trim();
@@ -59,4 +61,20 @@ export function scan(state, rnd = Math.random) {
 export function logRadio(state, entry) {
   state.radio.log.push({ at: state.clock.minutes, ...entry });
   if (state.radio.log.length > 200) state.radio.log.splice(0, state.radio.log.length - 200);
+}
+
+
+// ------------------------------------------------------------ walkie-talkies
+const BUILT_UP = /residence|store|hospital|government|industrial|checkpoint|religious|transport/;
+/** Who a walkie-talkie call can reach from where the survivor stands. Short range: a few kilometres, less among buildings. */
+export function walkieReach(state, rnd = Math.random) {
+  const here = getLocation(state, state.location);
+  const rangeKm = here && BUILT_UP.test(here.type) ? 3 : 8;
+  const near = id => { const l = getLocation(state, id); return l ? distance(here, l) : Infinity; };
+  const companions = away(state).filter(id => state.companions[id].hasWalkie).map(id => { const loc = state.companions[id].assignment?.locationId; const d = loc ? near(loc) : 0; return { id, name: getNpc(state, id)?.name || id, locationName: getLocation(state, loc)?.name || 'nearby', distance: Math.round(d) }; }).filter(c => c.distance <= rangeKm);
+  const factions = (state.truth.factions || []).filter(f => (state.factions[f.id]?.standing ?? 0) > -60).filter(f => {
+    if (near(f.baseLocationId) <= rangeKm) return true;
+    return (state.truth.locations || []).some(l => (locState(state, l.id).heldBy ?? l.heldBy) === f.id && near(l.id) <= rangeKm);
+  }).map(f => ({ id: f.id, name: f.name }));
+  return { rangeKm, companions, factions, stranger: rnd() < 0.15 };
 }

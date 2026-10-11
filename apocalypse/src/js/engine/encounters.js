@@ -6,7 +6,7 @@ import { getLocation, locState, effectiveDanger } from './world.js';
 import { diff } from './survival.js';
 import { isNight } from './clock.js';
 import { movementPenalty, combatPenalty, addInjury, REGION_LABEL } from './body.js';
-import { weaponRating, spendAmmo, overweightFactor, removeItem, genericItem } from './inventory.js';
+import { weaponRating, spendAmmo, overweightFactor, removeItem, genericItem, vehicleOf } from './inventory.js';
 import { withPlayer, skillCount, adjustLoyalty, lose } from './companions.js';
 import { holderOf, adjustStanding, hostilityMod } from './factions.js';
 import { getNpc } from './world.js';
@@ -20,15 +20,18 @@ export function travelPlan(state, toId) {
   const w = state.weather?.today || {};
   const night = isNight(state.clock.minutes);
   let minutes = Math.max(1, dist) * 6 * (w.travel || 1) * (1 + movementPenalty(state)) * (overweightFactor(state) > 1 ? 1.25 : 1) * (night ? 1.15 : 1);
-  if (state.flags.includes('has_vehicle')) minutes *= 0.35;
-  minutes = clamp(Math.round(minutes), 15, 16 * 60);
+  const v = vehicleOf(state.inventory.items);
+  const vehicle = state.flags.includes('has_vehicle') ? 'vehicle' : v?.kind === 'motor' ? v.item.name : v?.kind === 'bike' ? v.item.name : null;
+  if (state.flags.includes('has_vehicle') || v?.kind === 'motor') minutes *= 0.35;
+  else if (v?.kind === 'bike') minutes *= 0.6;
+  minutes = clamp(Math.round(minutes), 10, 16 * 60);
   const t = state.truth.threat || {};
   let risk = (effectiveDanger(state, toId) * 5 + (state.threat.level || 0) * 5 + (t.baseLevel || 0) * 2 + dist * 0.15) * (w.encounter || 1) * diff(state).encounter;
   if (night) risk *= Number(t.nightMultiplier) || 1.5;
   risk -= skillCount(state, 'stealth') * 6 + skillCount(state, 'scavenging') * 2;
   risk += withPlayer(state).length * 2;
   if (state.flags.some(f => f.startsWith('lured_by'))) risk = 100;
-  return { distance: Math.round(dist), minutes, risk: clamp(Math.round(risk), 3, 100), to, from };
+  return { distance: Math.round(dist), minutes, risk: clamp(Math.round(risk), 3, 100), to, from, vehicle };
 }
 
 export function rollTravel(state, toId, rnd = Math.random) {

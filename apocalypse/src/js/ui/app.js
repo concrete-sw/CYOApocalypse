@@ -6,13 +6,14 @@ import { WindowManager } from './windows.js';
 import { runBoot } from './boot.js';
 import { registerPanels, DOCK_ORDER } from './panels/index.js';
 import { PROVIDERS, getProvider, complete } from '../providers/index.js';
-import { generateWorld } from '../engine/worldGenerator.js';
+import { generateWorld, extendTimeline } from '../engine/worldGenerator.js';
+import { resolveStartDay } from '../prompts/worldGeneration.js';
 import { runTurn } from '../engine/gm.js';
 import { runDebrief, finalizeDebrief, fallbackDebrief, computeStats } from '../engine/ending.js';
-import { newGameState, addLog, advanceTime, checkEnd, DOOM_LABEL } from '../engine/state.js';
-import { formatTime, phaseOf, daysLeft, dayOf, isNight, hourOf, MIN_PER_DAY } from '../engine/clock.js';
+import { newGameState, addLog, addFact, advanceTime, checkEnd, DOOM_LABEL, migrateState, reopenAfterDeadline, gearAvailable, unfiredCount } from '../engine/state.js';
+import { formatTime, phaseOf, daysLeft, dayOf, isNight, hourOf, MIN_PER_DAY, formatDate, collapseDay } from '../engine/clock.js';
 import { APOCALYPSES, apocalypseById, randomApocalypse } from '../engine/apocalypses.js';
-import { BACKGROUNDS, useItem, craft, removeItem, findItem, totalWeight, maxWeight, supplyDays, RECIPES } from '../engine/inventory.js';
+import { BACKGROUNDS, useItem, craft, removeItem, findItem, totalWeight, maxWeight, supplyDays, RECIPES, startingKit } from '../engine/inventory.js';
 import { deposit, withdraw, recoverCache } from '../engine/shelter.js';
 import { clearGuard, withPlayer, loyaltyLabel, TASKS } from '../engine/companions.js';
 import { getLocation, getNpc, getFaction, fuzzyFind } from '../engine/world.js';
@@ -132,9 +133,13 @@ export class App {
   setupNewGame() {
     const bg = $('#background');
     for (const b of BACKGROUNDS) bg.append(h('option', { value: b.id }, b.name));
+    bg.append(h('option', { value: 'custom' }, 'Write your own…'));
     const notes = () => {
       const b = BACKGROUNDS.find(x => x.id === bg.value);
-      $('#backgroundNotes').textContent = b ? `${b.blurb} Skills: ${b.skills.join(', ')}. Starts with ${b.kit.map(k => k.name.toLowerCase() + (k.qty > 1 ? ` ×${k.qty}` : '')).join(', ')}, plus a water bottle, a lighter, a jacket and a granola bar.${b.carry ? ` Carry limit ${b.carry > 0 ? '+' : ''}${b.carry} kg.` : ''}` : '';
+      $('#customBackgroundRow').classList.toggle('hidden', bg.value !== 'custom');
+      $('#backgroundNotes').textContent = bg.value === 'custom'
+        ? 'Describe who you are in a few lines. The world is built around it: your skills, what you own, where you work, who is in your life.'
+        : b ? `${b.blurb} Skills: ${b.skills.join(', ')}. Among your things: ${b.kit.map(k => k.name.toLowerCase() + (k.qty > 1 ? ` ×${k.qty}` : '')).join(', ')}.${b.carry ? ` Carry limit ${b.carry > 0 ? '+' : ''}${b.carry} kg.` : ''}` : '';
     };
     bg.addEventListener('change', notes); notes();
     const ap = $('#apocalypseType');
@@ -142,14 +147,25 @@ export class App {
     ap.value = 'zombie';
     const toggle = () => $('#customPremiseRow').classList.toggle('hidden', ap.value !== 'custom');
     ap.addEventListener('change', toggle); toggle();
+    const len = $('#gameLength');
+    const toggleLen = () => $('#customLengthRow').classList.toggle('hidden', len.value !== 'custom');
+    len.addEventListener('change', toggleLen); toggleLen();
     $('#newGameForm').addEventListener('submit', async e => {
       e.preventDefault();
       let apo = apocalypseById(ap.value) || APOCALYPSES[0];
       if (apo.id === 'random') apo = randomApocalypse();
       const premise = $('#customPremise').value.trim();
       if (apo.id === 'custom' && premise.length < 10) { toast('Describe your premise in a sentence or two.', 'warn'); $('#customPremise').focus(); return; }
-      const settings = { apocalypseId: apo.id, apocalypseName: apo.name, customPremise: apo.id === 'custom' ? premise : '', difficulty: $('#difficulty').value, length: $('#gameLength').value };
-      const survivor = { name: $('#survivorName').value.trim() || 'Survivor', background: bg.value };
+      const customBackground = $('#customBackground').value.trim();
+      if (bg.value === 'custom' && customBackground.length < 10) { toast('Say who you are in a line or two.', 'warn'); $('#customBackground').focus(); return; }
+      const start = $('#gameStart').value;
+      const openEnded = len.value === 'open';
+      const lengthDays = openEnded ? 90 : len.value === 'custom' ? Math.max(7, Math.min(730, Math.round(Number($('#customLength').value) || 30))) : Number(len.value);
+      const settings = {
+        apocalypseId: apo.id, apocalypseName: apo.name, customPremise: apo.id === 'custom' ? premise : '', difficulty: $('#difficulty').value,
+        lengthDays, openEnded, start, startDay: resolveStartDay(start), homePlace: $('#homePlace').value.trim(), customBackground: bg.value === 'custom' ? customBackground : ''
+      };
+      const survivor = { name: $('#survivorName').value.trim() || 'Survivor', background: bg.value, text: bg.value === 'custom' ? customBackground : '' };
       await this.startNewGame(settings, survivor);
     });
     $('#genCancel').addEventListener('click', () => this.abort?.abort());
@@ -174,17 +190,20 @@ export class App {
     }
   }
 
-  async startNewGame(settings, survivor) {
+  async startNewGame(settings, survivor, { continuation = null, carryOver = null } = {}) {
     const st = $('#genStatus');
     const btn = $('#newGameForm button[type=submit]');
     btn.disabled = true; $('#genCancel').classList.remove('hidden'); st.className = 'muted small';
     this.abort = new AbortController();
     try {
-      const skills = BACKGROUNDS.find(b => b.id === survivor.background)?.skills || [];
-      const truth = await generateWorld({ ...this.apiOpts, settings, survivor: { ...survivor, skills }, signal: this.abort.signal, onProgress: msg => { st.textContent = msg; } });
-      this.state = newGameState({ survivor, truth, settings });
-      this.slot = 0;
-      addLog(this.state, 'system', `Survivor ${this.state.survivor.name} (${this.state.survivor.id}) registered. Region: ${truth.region?.name || 'unknown'}. "${truth.title}".`);
+      const skills = survivor.background === 'custom' ? [] : (BACKGROUNDS.find(b => b.id === survivor.background)?.skills || []);
+      const truth = await generateWorld({ ...this.apiOpts, settings, survivor: { ...survivor, skills }, continuation, signal: this.abort.signal, onProgress: msg => { st.textContent = msg; } });
+      const s = newGameState({ survivor, truth, settings, carryOver });
+      s.openingKind = (truth.startOffset || 0) > 0 ? 'opening' : 'prologue_start';
+      this.state = s; this.slot = 0; this.selected = { item: null, npc: null, location: null, region: null };
+      addLog(s, 'system', `${carryOver ? `Chapter ${s.chapter}. ` : ''}Survivor ${s.survivor.name} (${s.survivor.id}) registered. Region: ${truth.region?.name || 'unknown'}. "${truth.title}".`);
+      addLog(s, 'briefing', 'Dossier issued.');
+      if ((truth.startOffset || 0) > 0) { addLog(s, 'sitrep', truth.situationReport, 'system'); addFact(s, 'Situation report received (see the Log).', 'system'); }
       this.autosave();
       st.textContent = '';
       this.enterDesktop(true);
@@ -196,7 +215,7 @@ export class App {
   }
 
   loadState(state, slot) {
-    this.state = state;
+    this.state = migrateState(state);
     this.slot = slot || 0;
     this.selected = { item: null, npc: null, location: null, region: null };
     if (state.ended && state.debrief) { this.showDebrief(state.debrief); return; }
@@ -241,18 +260,26 @@ export class App {
     if (!this.wm.isNarrow()) { this.wm.show('status'); this.wm.focus('log'); }
     this.wm.refreshAll();
     $('#cmdInput').focus();
-    if (fresh && this.state.turnCount === 0) this.act({ type: this.state.lineage?.length ? 'arrival' : 'prologue_start' });
+    if (fresh && this.state.turnCount === 0) this.act({ type: this.state.openingKind || (this.state.lineage?.length ? 'arrival' : 'prologue_start') });
+  }
+
+  /** Panels that depend on gear: the Radio exists only while there is a radio or a walkie-talkie. */
+  syncDock() {
+    const s = this.state; if (!s || !this.wm) return;
+    const g = gearAvailable(s);
+    this.wm.setAvailable('radio', g.radio || g.walkie);
   }
 
   updateTopbar() {
     const s = this.state; if (!s) return;
     const m = s.clock.minutes;
-    $('#topDay').textContent = formatTime(m);
+    $('#topDay').textContent = `${formatTime(m)} · ${formatDate(s, m).toUpperCase()}`;
     $('#topWeather').textContent = `${phaseOf(m).toUpperCase()} · ${s.weather.today?.label || ''}`;
     const left = daysLeft(s);
     const dl = $('#topDeadline');
-    dl.textContent = s.ended ? 'RECORD CLOSED' : left >= 0 ? `DEADLINE DAY ${s.clock.deadlineDay} · ${left} DAY${left === 1 ? '' : 'S'} LEFT` : 'PAST THE DEADLINE';
-    dl.className = `mono deadline ${left < 2 ? 'danger' : left < 5 ? 'warn' : ''}`;
+    dl.textContent = s.ended ? 'RECORD CLOSED' : left == null ? (s.deadlinePassed != null ? `PAST DAY ${s.deadlinePassed} · NO CLOCK` : 'OPEN-ENDED') : left >= 0 ? `DEADLINE DAY ${s.clock.deadlineDay} · ${left} DAY${left === 1 ? '' : 'S'} LEFT` : 'PAST THE DEADLINE';
+    dl.className = `mono deadline ${left != null && left < 2 ? 'danger' : left != null && left < 5 ? 'warn' : ''}`;
+    this.syncDock();
     $('#topSurvivor').textContent = `${s.survivor.name} · ${s.survivor.id}`;
     const region = s.truth.region?.name || 'Region';
     $('#wmText').innerHTML = `<div class="wm-name">${esc(s.survivor.name.toUpperCase())}</div><div class="wm-id">${esc(s.survivor.id)}</div><div class="wm-region">${esc(region.toUpperCase())}</div><div class="wm-sub">SURVIVOR LIAISON RECORD</div>`;
@@ -307,6 +334,7 @@ export class App {
       for (const n of result.notices) toast(n, /Injured|Lost|Ill:|starving|dehydrated|infected|barely|critical|died|left|gone/i.test(n) ? 'danger' : /CLUE|Found|joins|Met|Healed|Location|Discovered/i.test(n) ? 'info' : '');
       if (result.fallback) toast('The reply was not well-formed; shown as plain text, no state changes applied.', 'warn');
       this.afterTurn(action, result);
+      await this.maybeExtendTimeline();
     } catch (err) {
       tw.finish('');
       liveWrap.className = 'entry system';
@@ -319,9 +347,43 @@ export class App {
       this.wm.refreshAll();
       // Bring the panel the player was working in back to the front now that the narrative has finished.
       if (prevFocused && prevFocused !== 'log' && this.wm.open.has(prevFocused)) this.wm.focus(prevFocused);
-      if (this.state.ended && !this.state.debrief) this.runEnding();
+      if (this.state.ended && !this.state.debrief) this.onEnded();
     }
     return result;
+  }
+
+  /** The game has ended: a death, an escape or an end by choice close the record; a deadline is the player's call. */
+  onEnded() {
+    const s = this.state; if (!s?.ended || s.debrief) return;
+    if (s.ended.kind === 'deadline') this.deadlineChoice(); else this.runEnding();
+  }
+
+  async deadlineChoice() {
+    const s = this.state;
+    const keep = await modal(h('div', {}, h('p', { class: 'narr' }, `Day ${s.clock.deadlineDay} has come and gone. Whatever was going to leave has left; whatever was going to be decided is decided. You are still alive.`), h('p', { class: 'narr' }, 'Close the record now, and the truth is unsealed in the debrief. Or keep surviving: no deadline, the world goes on without a clock, and the record closes only when you die or choose to end it.')), { title: 'The deadline has passed', buttons: [{ label: 'Keep surviving', value: true, primary: true }, { label: 'Close the record', value: false, danger: true }] });
+    if (keep) {
+      reopenAfterDeadline(s);
+      this.updateTopbar(); this.setWorldBanner(); this.autosave(); this.wm.refreshAll();
+      toast('No clock now. Only the days.', 'info');
+      this.act({ type: 'wait', hours: 0.25 });
+    } else this.runEnding();
+  }
+
+  /** When the scripted timeline has run out and play goes on, the GM writes the next weeks of the world. */
+  async maybeExtendTimeline() {
+    const s = this.state;
+    if (!s || s.ended || s.phase !== 'play' || unfiredCount(s) > 0) return;
+    if (s.extensionFailedTurn != null && s.turnCount - s.extensionFailedTurn < 3) return;
+    try {
+      this.setStatus('The world keeps moving...', true);
+      const r = await extendTimeline({ ...this.apiOpts, state: s, signal: this.abort?.signal, onStatus: t => this.setStatus(t, true) });
+      addLog(s, 'system', `The world moves on: ${r.added} new developments lie ahead${r.newWayOut ? ', and a new way out of the region exists' : ''}.`);
+      toast('The world keeps moving.', 'info');
+      delete s.extensionFailedTurn;
+    } catch (err) {
+      s.extensionFailedTurn = s.turnCount;
+      if (!this.abort?.signal?.aborted) toast(`The world could not be extended: ${err.message}. Will try again later.`, 'warn', 7000);
+    } finally { this.setStatus(''); }
   }
 
   waitTypewriter(tw) {
@@ -341,7 +403,7 @@ export class App {
       if (e.kind === 'raid') this.bump('shelter');
       if (/companion|betrayal|assignment/.test(e.kind)) this.bump('companions');
     }
-    if (action.type === 'tune' || action.type === 'scan') this.bump('radio');
+    if (action.type === 'tune' || action.type === 'scan' || action.type === 'call') this.bump('radio');
   }
 
   bump(id) {
@@ -361,7 +423,8 @@ export class App {
     const s = this.state;
     const npc = id => getNpc(s, id)?.name || id;
     switch (a.type) {
-      case 'prologue_start': case 'arrival': return null;
+      case 'prologue_start': case 'arrival': case 'opening': return null;
+      case 'call': return `Into the walkie-talkie: "${a.text}"`;
       case 'travel': return `Sets out for ${getLocation(s, a.locationId)?.name}.`;
       case 'look': return 'Looks around.';
       case 'search': return `Searches ${a.area}.`;
@@ -417,8 +480,9 @@ export class App {
   wait(hours = 1) { return this.act({ type: 'wait', hours }); }
   talk(npcId, text, indirect = false) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim(), indirect }); }
   give(itemId, npcId) { return this.act({ type: 'give', itemId, npcId }); }
-  tune(freq) { return this.act({ type: 'tune', freq }); }
-  scan() { return this.act({ type: 'scan' }); }
+  tune(freq) { if (!gearAvailable(this.state).radio) { toast('You have no radio to tune.', 'warn'); return null; } return this.act({ type: 'tune', freq }); }
+  scan() { if (!gearAvailable(this.state).radio) { toast('You have no radio to scan with.', 'warn'); return null; } return this.act({ type: 'scan' }); }
+  call(text) { if (!gearAvailable(this.state).walkie) { toast('You have no walkie-talkie.', 'warn'); return null; } if (!text?.trim()) return null; return this.act({ type: 'call', text: text.trim() }); }
   fortify() { return this.act({ type: 'fortify' }); }
   claim() { return this.act({ type: 'claim' }); }
   abandon() { return this.act({ type: 'abandon' }); }
@@ -483,7 +547,8 @@ export class App {
     const lines = [
       `${formatTime(s.clock.minutes)} · ${phaseOf(s.clock.minutes).toUpperCase()} · ${s.weather.today?.label || ''}`,
       `DOOM  ${s.doom}/5 ${DOOM_LABEL[s.doom]} · threat ${s.threat.level}/5 · ${daysLeft(s)} day(s) to the deadline`,
-      `WHERE ${loc?.name || '?'}${s.shelter?.locationId === s.location ? ' (shelter)' : ''} · mode ${s.mode}`,
+      `WHEN  ${formatTime(s.clock.minutes)} · ${formatDate(s)} · ${collapseDay(s) < 0 ? `${-collapseDay(s)} day(s) before it begins` : `collapse day ${collapseDay(s)}`} · ${s.clock.deadlineDay == null ? 'no deadline' : `deadline day ${s.clock.deadlineDay}`}`,
+      `WHERE ${loc?.name || '?'}${s.shelter?.locationId === s.location ? ' (shelter)' : ''} · mode ${s.mode} · power ${s.utilities?.power ? 'on' : 'off'} · water ${s.utilities?.water ? 'on' : 'off'} · phones ${s.utilities?.cell ? 'on' : 'off'}`,
       `BODY  health ${r(v.health)} · hunger ${r(v.hunger)} · thirst ${r(v.thirst)} · fatigue ${r(v.fatigue)} · warmth ${r(v.warmth)} · morale ${r(v.morale)} · ${s.truth.apocalypse?.hazardName || 'hazard'} ${r(v.hazard)}`,
       `      ${conditions(s).join(', ') || 'no acute conditions'}`,
       `HURT  ${describeInjuries(s).join('; ') || 'no injuries'}${s.body.illness ? ` · ill: ${s.body.illness.name} (${s.body.illness.severity})` : ''}`,
@@ -532,7 +597,8 @@ export class App {
       'save': () => this.wm.show('settings'), 'export': () => store.exportState(s), 'tile': () => this.wm.tile(),
       'look': () => this.look(), 'look around': () => this.look(), 'l': () => this.look(),
       'skip': () => this.skipAhead(), 'skip ahead': () => this.skipAhead(),
-      'scan': () => this.scan(), 'listen': () => this.scan(), 'radio': () => this.wm.show('radio'),
+      'scan': () => this.scan(), 'listen': () => this.scan(), 'radio': () => { const g = gearAvailable(s); if (g.radio || g.walkie) this.wm.show('radio'); else toast('You have no radio.', 'warn'); },
+      'dossier': () => this.wm.show('dossier'), 'briefing': () => this.wm.show('dossier'), 'who am i': () => this.wm.show('dossier'),
       'claim': () => this.claim(), 'settle': () => this.claim(), 'claim shelter': () => this.claim(), 'settle here': () => this.claim(),
       'fortify': () => this.fortify(), 'barricade': () => this.fortify(), 'abandon': () => this.abandon(), 'abandon shelter': () => this.abandon(),
       'hint': () => this.hint(), 'end my story': () => this.endStory(), 'end story': () => this.endStory()
@@ -550,6 +616,7 @@ export class App {
     if ((m = low.match(/^(?:talk|speak|say|ask|tell)\s+(?:to\s+|with\s+)?(?:the\s+)?(\S+)\s*(.*)$/))) { const n = findNpc(m[1]); if (!n) return null; return m[2].trim() ? () => this.talk(n.id, text, true) : () => { this.selected.npc = n.id; this.wm.show('companions'); }; }
     if ((m = low.match(/^(?:assign|send)\s+(\S+)\s+(?:to\s+)?(scout|scavenge|hunt|guard)(?:\s+(?:to\s+|at\s+)?(?:the\s+)?(.+))?$/))) { const n = findNpc(m[1]); if (!n) return null; const l = m[3] ? findLoc(m[3]) : null; if (m[3] && !l) return null; return () => this.assign(n.id, m[2], l?.id || null); }
     if ((m = low.match(/^(?:tune|dial|radio|tune\s+(?:the\s+)?radio|set\s+(?:the\s+)?radio|switch\s+(?:the\s+)?radio)\s+(?:to\s+|in\s+to\s+|into\s+)?(\d+(?:[.,]\d+)?)/))) return () => this.tune(m[1]);
+    if ((m = low.match(/^(?:call|transmit|radio\s+call|key\s+the\s+(?:walkie|radio))\s*:?\s+(.+)$/)) && gearAvailable(s).walkie) { const said = text.slice(text.length - m[1].length).trim(); return () => this.call(said); }
     if (/^(?:listen\s+to|turn\s+on|check|try|switch\s+on|scan|work)\s+(?:the\s+)?radio\b/.test(low) || /^scan\s+(?:the\s+)?(?:bands?|frequencies|airwaves|dial)$/.test(low)) return () => this.scan();
     if ((m = low.match(/^(?:trade|barter)\b\s*(.*)$/))) { const f = holderOf(s, s.location); return f && !(m[1] && findNpc(m[1])) ? () => this.trade(m[1] || 'What do you have to trade?') : null; }
     if (/^(?:hint|give\s+me\s+a\s+hint|any\s+hints?|what\s+should\s+i\s+do(?:\s+next)?)\b/.test(low)) return () => this.hint(text);
@@ -623,7 +690,8 @@ export class App {
         'Encounters': d.stats?.encounters ?? 0, 'Fights won': d.stats?.kills ?? 0, 'Nights without shelter': d.stats?.nightsOutside ?? 0, 'Hints taken': d.stats?.hints ?? 0, 'Companions at the end': (d.stats?.companions || []).filter(c => c.status === 'with').length
       }).map(([k, v]) => h('tr', {}, h('th', {}, k), h('td', {}, String(v)))))),
       h('div', { class: 'row' },
-        h('button', { class: 'btn primary', type: 'button', onClick: () => { this.renderSlots(); this.showScreen('newgame'); } }, 'New survivor'),
+        e.kind === 'escape' ? h('button', { class: 'btn primary', type: 'button', onClick: () => this.continueChapter() }, 'Continue the story ▸') : null,
+        h('button', { class: e.kind === 'escape' ? 'btn' : 'btn primary', type: 'button', onClick: () => { this.renderSlots(); this.showScreen('newgame'); } }, 'New survivor'),
         h('button', { class: 'btn', type: 'button', onClick: () => this.continueWorld() }, 'Continue in this world'),
         h('button', { class: 'btn ghost', type: 'button', onClick: () => store.exportState(s) }, 'Export record'),
         h('button', { class: 'btn ghost', type: 'button', onClick: () => { this.showScreen('desktop'); } }, 'Review the terminal (read-only)'))
@@ -640,8 +708,13 @@ export class App {
     if (!ok) return;
     const s = newGameState({ survivor: { name: name.value.trim() || 'Survivor', background: bg.value }, truth: old.truth, settings: old.settings });
     const nextMorning = (Math.floor(old.clock.minutes / MIN_PER_DAY) + 1) * MIN_PER_DAY + 7 * 60;
-    s.clock.minutes = Math.min(nextMorning, (old.clock.deadlineDay) * MIN_PER_DAY + 7 * 60);
-    s.phase = 'play'; s.doom = old.doom; s.threat.level = old.threat.level;
+    s.clock.minutes = old.clock.deadlineDay == null ? nextMorning : Math.min(nextMorning, old.clock.deadlineDay * MIN_PER_DAY + 7 * 60);
+    s.clock.deadlineDay = old.clock.deadlineDay; s.deadlinePassed = old.deadlinePassed;
+    s.phase = 'play'; s.doom = old.doom; s.threat.level = old.threat.level; s.openingKind = 'arrival';
+    s.utilities = { ...old.utilities };
+    // Someone who has been surviving this long carries a scavenger's pack, not a home.
+    s.inventory.items = startingKit({ background: bg.value, truth: old.truth, startDay: Math.max(1, collapseDay(old)) }).pack;
+    s.shelter = null; s.mode = 'nomad';
     s.events.fired = [...old.events.fired]; s.worldEvents = [...old.worldEvents];
     s.locationState = JSON.parse(JSON.stringify(old.locationState));
     for (const ls of Object.values(s.locationState)) ls.visits = 0;
@@ -655,8 +728,28 @@ export class App {
     s.lineage = [...(old.lineage || []), { name: old.survivor.name, ending: old.ended?.kind || 'retired', day: dayOf(old.ended?.at || old.clock.minutes), cause: old.ended?.cause || null }];
     s.weather.today = null; advanceTime(s, 0); s.weather.today = s.weather.today || old.weather.today;
     addLog(s, 'system', `${s.survivor.name} (${s.survivor.id}) takes up the record on day ${dayOf(s.clock.minutes)}. ${old.survivor.name}'s story ended on day ${dayOf(old.ended?.at || old.clock.minutes)}.`);
+    addLog(s, 'briefing', 'Dossier issued.');
     this.state = s; this.slot = 0; this.selected = { item: null, npc: null, location: null, region: null };
     this.autosave();
     this.enterDesktop(true);
+  }
+
+  /** The survivor got out: the story goes on in a new region of the same world, with their pack and the people who came with them. */
+  async continueChapter() {
+    const old = this.state; if (!old || old.ended?.kind !== 'escape') return;
+    const wo = old.truth.ending?.trueWayOut || {};
+    const mates = withPlayer(old).map(id => ({ id, name: getNpc(old, id)?.name || id, background: getNpc(old, id)?.background || '' }));
+    const ok = await modal(h('div', {}, h('p', { class: 'narr' }, wo.howItPlaysOut || 'You got out.'), h('p', { class: 'narr' }, `The story continues somewhere new, in the same world, with what you carry${mates.length ? ` and ${mates.map(m => m.name).join(', ')}` : ''}. A new region is built around your arrival; the collapse is the same one, a little older.`)), { title: `Chapter ${(old.chapter || 1) + 1}`, buttons: [{ label: 'Go on', value: true, primary: true }, { label: 'Not now', value: false }] });
+    if (!ok) return;
+    const chapter = (old.chapter || 1) + 1;
+    const settings = { ...old.settings, start: 'deep', startDay: Math.max(1, collapseDay(old) + 2), lengthDays: old.settings.lengthDays || 30, homePlace: '', seed: null };
+    const continuation = { chapter, previousTitle: old.truth.title, howItEnded: `${wo.description || ''} ${wo.howItPlaysOut || ''}`.trim(), trueCause: old.truth.apocalypse?.trueCause || '', companions: mates };
+    const carryOver = {
+      chapter, items: old.inventory.items,
+      companions: withPlayer(old).map(id => ({ id, loyalty: old.companions[id].loyalty, mood: old.companions[id].mood, said: old.companions[id].said, hasWalkie: !!old.companions[id].hasWalkie })),
+      lineage: [...(old.lineage || []), { name: old.survivor.name, ending: 'escape', day: dayOf(old.ended?.at || old.clock.minutes), chapter: old.chapter || 1, title: old.truth.title }]
+    };
+    this.renderSlots(); this.showScreen('newgame');
+    await this.startNewGame(settings, { name: old.survivor.name, id: old.survivor.id, background: old.survivor.background, text: old.survivor.text || '' }, { continuation, carryOver });
   }
 }

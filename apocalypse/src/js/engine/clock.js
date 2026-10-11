@@ -29,7 +29,46 @@ export function formatDuration(minutes) {
   if (h > 0) return `${h}h ${m % 60}m`;
   return `${m}m`;
 }
-export function daysLeft(state) { return state.clock.deadlineDay - dayOf(state.clock.minutes); }
+/** Days until the deadline, or null when the game is open-ended. */
+export function daysLeft(state) { return state.clock.deadlineDay == null ? null : state.clock.deadlineDay - dayOf(state.clock.minutes); }
+
+// ---------------------------------------------------------------- calendar
+// Day 0 of play has a real calendar date (truth.region.startDate). Dates are
+// handled in UTC so daylight-saving changes cannot shift an hour.
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+export function parseStartDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+/** A plausible date for a season when the world did not supply one: the current year, mid-season. */
+export function defaultStartDate(season, year = new Date().getUTCFullYear()) {
+  const s = String(season || '').toLowerCase();
+  const md = /winter/.test(s) ? [1, 12] : /spring/.test(s) ? [4, 9] : /summer/.test(s) ? [7, 6] : [10, 14];
+  return `${year}-${String(md[0]).padStart(2, '0')}-${String(md[1]).padStart(2, '0')}`;
+}
+export function calendarDate(state, minutes = state.clock.minutes) {
+  const base = parseStartDate(state.truth?.region?.startDate) || parseStartDate(defaultStartDate(state.truth?.region?.season));
+  return new Date(base.getTime() + Math.floor(minutes / MIN_PER_DAY) * 86400000);
+}
+/** "Tue 14 Oct 2025" */
+export function formatDate(state, minutes = state.clock.minutes) {
+  const d = calendarDate(state, minutes);
+  return `${WEEKDAYS[d.getUTCDay()].slice(0, 3)} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()].slice(0, 3)} ${d.getUTCFullYear()}`;
+}
+/** "Tuesday 14 October 2025" */
+export function formatLongDate(state, minutes = state.clock.minutes) {
+  const d = calendarDate(state, minutes);
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+/** The full stamp the GM is given: "Day 3 (Friday 17 October 2025), 09:40, day". */
+export function formatStamp(state, minutes = state.clock.minutes) {
+  return `Day ${dayOf(minutes)} (${formatLongDate(state, minutes)}), ${formatHM(minutes)}, ${phaseOf(minutes)}`;
+}
+/** Days since the collapse began (negative before it): day of play plus the start offset. */
+export function collapseDay(state, minutes = state.clock.minutes) { return dayOf(minutes) + (Number(state.truth?.startOffset) || 0); }
 
 // ------------------------------------------------------------------ weather
 const KIND_LABEL = { clear: 'Clear', overcast: 'Overcast', rain: 'Rain', storm: 'Storm', fog: 'Fog', snow: 'Snow', heat: 'Heat', ashfall: 'Ashfall', dust: 'Dust' };

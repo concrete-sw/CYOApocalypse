@@ -2,7 +2,7 @@
 // health, hazard exposure, healing, infection and illness, all per tick.
 
 import { clamp } from './util.js';
-import { clothingWarmth, protectionLevel, overweightFactor } from './inventory.js';
+import { clothingWarmth, protectionLevel, overweightFactor, foodEffect, removeItem } from './inventory.js';
 import { REGION_LABEL } from './body.js';
 
 export const DIFFICULTY = {
@@ -17,6 +17,24 @@ const RATE = { hunger: 2.1, thirst: 4.2, fatigue: 3.0, morale: 0.25 };
 const INDOORS = /building|house|home|store|hospital|school|church|warehouse|office|mall|station|bunker|shelter|apartment|hotel|factory|clinic|pharmacy|cabin|barn|garage|library|motel|tower|silo|plant|depot|prison|base/i;
 
 export function atShelter(state) { return !!(state.shelter && state.shelter.locationId === state.location); }
+// Location types that have plumbing while the mains still run.
+const PLUMBED = /residence|shelter|store|hospital|government|religious|transport|industrial/;
+/** Running water where the survivor stands: the mains are on and the place is plumbed. */
+export function hasTap(state) {
+  if (!state.utilities?.water) return false;
+  const loc = (state.truth?.locations || []).find(l => l.id === state.location);
+  return atShelter(state) || (!!loc && (PLUMBED.test(loc.type) || INDOORS.test(`${loc.type} ${loc.name}`)));
+}
+/** At home with food in the stores, a hungry survivor simply eats. Returns a notice or null. */
+export function eatFromStores(state) {
+  const stash = state.shelter?.stash; if (!atShelter(state) || !stash) return null;
+  const food = stash.filter(x => x.category === 'food').sort((a, b) => a.condition - b.condition)[0];
+  if (!food) return null;
+  removeItem(stash, food.id, 1);
+  if (food.condition < 30) return `${food.name} has gone off. You throw it out.`;
+  state.vitals.hunger = clamp(state.vitals.hunger + foodEffect(food));
+  return `You eat from your stores: ${food.name.toLowerCase()}.`;
+}
 export function hasFire(state) {
   const lists = [state.inventory.items, ...(state.shelter?.stash ? [state.shelter.stash] : [])];
   const all = lists.flat();
@@ -32,6 +50,7 @@ export function warmthTarget(state) {
   if (atShelter(state)) {
     target += 6 + (loc?.shelterQuality || 0) * 3 + (w.warmth || 0) * 0.3;
     if (state.shelter.fire) target += 14;
+    if (state.utilities?.power) target += 10;   // heating, while the grid holds
   } else if (loc && INDOORS.test(`${loc.type} ${loc.name}`)) {
     target += 5 + (w.warmth || 0) * 0.5;
   } else {
@@ -59,6 +78,9 @@ export function tick(state, minutes, ctx = {}) {
   v.thirst = clamp(v.thirst - RATE.thirst * d.drain * h * (sleeping ? 0.6 : 1) * (hot ? 1.3 : 1) * (ctx.exertion ? 1.3 : 1));
   if (sleeping) v.fatigue = clamp(v.fatigue + (atShelter(state) ? 12 : ctx.camp ? 9 : 7) * h);
   else v.fatigue = clamp(v.fatigue - RATE.fatigue * h * (ow > 1 ? 1 + (ow - 1) * 1.5 : 1) * (ctx.exertion ? 1.4 : 1));
+  // Ordinary life: a running tap means you drink when you like; a stocked home means you eat when hungry.
+  if (hasTap(state) && v.thirst < 95) v.thirst = clamp(v.thirst + 40 * h);
+  if (!sleeping && atShelter(state) && v.hunger < 55) { const ate = eatFromStores(state); if (ate) notices.push(ate); }
 
   const target = warmthTarget(state);
   const step = Math.min(Math.abs(target - v.warmth), 6 * h);
@@ -84,7 +106,7 @@ export function tick(state, minutes, ctx = {}) {
   // Hazard exposure: the apocalypse-specific meter.
   const loc = (state.truth?.locations || []).find(l => l.id === state.location);
   const prot = protectionLevel(state.inventory.items) + (atShelter(state) ? 1 : 0);
-  const exposure = Math.max(0, (loc?.hazard || 0) - prot) * 0.6 * h;
+  const exposure = state.phase === 'prologue' ? 0 : Math.max(0, (loc?.hazard || 0) - prot) * 0.6 * h;
   const isRad = /radiat|fallout|dose|rad\b/i.test(state.truth?.apocalypse?.hazardName || '');
   v.hazard = clamp(v.hazard + exposure - (exposure === 0 ? (isRad ? 0.05 : 0.3) * h : 0));
 

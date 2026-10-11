@@ -366,3 +366,12 @@ body.reduce-motion .body-fig .region.infected { animation: none; }
   #scanlines, #noise { display: none; }
   .cursor::after, .topbar .status.busy::after, .body-fig .region.infected { animation: none; }
 }
+
+/* ---------- dossier ---------- */
+.dossier h3 { margin: 10px 0 4px; }
+.dossier p { margin: 4px 0; }
+.dossier .kv { margin: 4px 0; }
+.entry.briefing { border: 1px solid var(--accent); border-left-width: 4px; background: #66ff9908; padding: 8px 12px; }
+.entry.briefing .dossier.compact p.narr { font-size: 13px; }
+.entry.briefing .dossier.compact .card-head { margin-bottom: 2px; }
+.dock button.unavailable { display: none; }

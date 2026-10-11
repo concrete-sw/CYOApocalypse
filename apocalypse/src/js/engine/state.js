@@ -2,10 +2,10 @@
 // validates every id against the truth before accepting anything.
 
 import { clamp, asArray, str, num } from './util.js';
-import { START_MINUTES, MIN_PER_DAY, dayOf, weatherFor } from './clock.js';
-import { tick } from './survival.js';
+import { START_MINUTES, MIN_PER_DAY, dayOf, weatherFor, formatDate } from './clock.js';
+import { tick, atShelter } from './survival.js';
 import { addInjury, setIllness, REGION_LABEL } from './body.js';
-import { addItem, removeItem, findItem, startingItems, backgroundSkills } from './inventory.js';
+import { addItem, removeItem, findItem, startingKit, backgroundSkills, backgroundTitle, hasRadio, hasWalkie, hasPhone, vehicleOf } from './inventory.js';
 import { meet, recruit, lose, adjustLoyalty, MOODS, withPlayer, dailyUpkeep, checkBetrayals, resolveAssignment, skillCount } from './companions.js';
 import { meetFaction, adjustStanding, factionState } from './factions.js';
 import { nightlyRaidRoll, burnFuel, claimShelter, abandonShelter } from './shelter.js';
@@ -20,20 +20,32 @@ function makeSurvivorId() {
   return `SV-${Math.floor(1000 + Math.random() * 9000)}-${letters[Math.floor(Math.random() * letters.length)]}${letters[Math.floor(Math.random() * letters.length)]}`;
 }
 
-export function newGameState({ survivor, truth, settings }) {
+export const UTILITY_KEYS = ['power', 'water', 'cell', 'internet'];
+
+/**
+ * A fresh game. The truth is already normalised and shifted so that day 0 is
+ * the first day of play; truth.startOffset says how many days after the
+ * collapse began that is (negative: before it). carryOver brings a survivor,
+ * their pack and their companions into a new chapter.
+ */
+export function newGameState({ survivor, truth, settings, carryOver = null, rnd = Math.random }) {
   const start = truth.region?.startLocationId || truth.locations[0].id;
+  const startDay = Math.round(num(truth.startOffset, 0));
+  const background = survivor.background || 'nurse';
   const state = {
-    version: 1,
+    version: 2,
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     createdAt: new Date().toISOString(),
-    survivor: { name: survivor.name, id: survivor.id || makeSurvivorId(), background: survivor.background, skills: backgroundSkills(survivor.background) },
+    survivor: { name: survivor.name, id: survivor.id || makeSurvivorId(), background, title: backgroundTitle(background, truth), skills: backgroundSkills(background, truth), text: str(survivor.text, '').slice(0, 600), carry: background === 'custom' ? clamp(num(truth.survivor?.carry, 0), -4, 6) : 0 },
     settings: { ...settings },
     truth,
-    clock: { minutes: START_MINUTES, deadlineDay: num(truth.deadlineDay, 30) },
+    clock: { minutes: START_MINUTES, deadlineDay: settings?.openEnded ? null : num(truth.deadlineDay, 30) },
+    utilities: { power: true, water: true, cell: true, internet: true },
+    home: start,
     weather: { today: null },
     vitals: { health: 100, hunger: 85, thirst: 85, fatigue: 90, warmth: 60, morale: 70, hazard: 0 },
     body: { injuries: [], illness: null },
-    inventory: { items: startingItems(survivor.background) },
+    inventory: { items: [] },
     companions: {}, npcsMet: [], factions: {},
     discovered: { locations: [] },
     location: start, shelter: null, caches: {}, mode: 'nomad', locationState: {},
@@ -42,14 +54,62 @@ export function newGameState({ survivor, truth, settings }) {
     threat: { level: 0, local: {} },
     events: { fired: [], queued: [] }, pending: [], worldEvents: [],
     journal: '', log: [], history: [], summary: '', turnCount: 0, hints: 0,
-    phase: 'prologue', prologueTurns: 0, ended: null, debrief: null, doom: 1, lastChoices: [], encounter: null,
+    phase: startDay > 0 ? 'play' : 'prologue', prologueTurns: 0, ended: null, debrief: null, doom: 1, lastChoices: [], encounter: null,
+    chapter: carryOver?.chapter || 1, lineage: carryOver?.lineage || [],
     stats: { kills: 0, encounters: 0, itemsFound: 0, distance: 0, nightsOutside: 0, days: 0 }
   };
   for (const l of truth.locations) if (l.initiallyKnown || l.id === start) state.discovered.locations.push(l.id);
   for (const f of truth.factions || []) factionState(state, f.id);
   state.weather.today = weatherFor(state, 0);
   locState(state, start).visits = 1;
+
+  // What they own. Before the collapse that is a home with a pantry; later, a pack.
+  const kit = carryOver?.items ? { pack: carryOver.items.map(it => ({ ...it })), stash: [] } : startingKit({ background, truth, startDay, rnd });
+  state.inventory.items = kit.pack;
+  if (kit.stash.length) { const r = claimShelter(state, start); if (r.ok) state.shelter.stash = kit.stash; }
+  // People from the survivor's own life are known from the first minute.
+  for (const n of truth.npcs || []) if (n.knownToSurvivor) meet(state, n.id);
+  for (const c of carryOver?.companions || []) {
+    if (!getNpc(state, c.id)) continue;
+    recruit(state, c.id);
+    Object.assign(state.companions[c.id], { loyalty: clamp(num(c.loyalty, 50), 0, 100), mood: c.mood || 'steady', said: Array.isArray(c.said) ? c.said.slice(-10) : [], hasWalkie: !!c.hasWalkie });
+  }
+  if (startDay > 0) {
+    state.threat.level = clamp(Math.round(num(truth.threat?.baseLevel, 1)), 0, 5);
+    prefireTimeline(state);
+  }
+  seedFacts(state);
   return state;
+}
+
+/** Fill in fields added after a save was written, so older saves keep loading. */
+export function migrateState(state) {
+  if (!state || typeof state !== 'object') return state;
+  state.utilities = state.utilities || { power: false, water: false, cell: false, internet: false };
+  state.home = state.home || state.truth?.region?.startLocationId || null;
+  state.chapter = state.chapter || 1;
+  state.lineage = state.lineage || [];
+  if (state.survivor && !state.survivor.title) state.survivor.title = backgroundTitle(state.survivor.background, state.truth);
+  if (state.truth && state.truth.startOffset == null) state.truth.startOffset = 0;
+  if (state.clock && state.clock.deadlineDay === undefined) state.clock.deadlineDay = num(state.truth?.deadlineDay, 30);
+  return state;
+}
+
+function seedFacts(state) {
+  const t = state.truth; const home = getLocation(state, state.home);
+  if (home) addFact(state, `Home: ${home.name}.`, 'system');
+  const v = vehicleOf(state.inventory.items); if (v) addFact(state, `Has a ${v.kind === 'bike' ? 'bicycle' : 'vehicle'}: ${v.item.name}.`, 'system');
+  for (const n of t.npcs || []) if (n.knownToSurvivor) addFact(state, `Knows ${n.name}${n.relationToSurvivor ? ` (${n.relationToSurvivor})` : ''}.`, 'system');
+}
+
+/** The minute on the game clock at which a timeline entry fires. */
+export const timelineMinute = e => num(e.day, 0) * MIN_PER_DAY + num(e.hour, 9) * 60;
+export function unfiredCount(state) { return asArray(state.truth.timeline).filter((e, i) => !state.events.fired.includes(i)).length; }
+
+/** Gear that unlocks parts of the interface: a radio (carried, or in the stash while at the shelter), a walkie-talkie, a live phone. */
+export function gearAvailable(state) {
+  const lists = [state.inventory.items, ...(atShelter(state) && state.shelter?.stash ? [state.shelter.stash] : [])];
+  return { radio: lists.some(hasRadio), walkie: hasWalkie(state.inventory.items), phone: hasPhone(state.inventory.items) && !!state.utilities?.cell, vehicle: vehicleOf(state.inventory.items) };
 }
 
 // ------------------------------------------------------------------ logging
@@ -100,28 +160,43 @@ export function advanceTime(state, minutes, ctx = {}) {
 }
 
 function fireTimeline(state, from, to) {
-  const tl = asArray(state.truth.timeline);
-  tl.forEach((e, i) => {
+  asArray(state.truth.timeline).forEach((e, i) => {
     if (state.events.fired.includes(i)) return;
-    const at = num(e.day, 0) * MIN_PER_DAY + num(e.hour, 9) * 60;
-    if (at > to) return;
-    state.events.fired.push(i);
-    const doom = clamp(Math.round(num(e.doom, 0)), 1, 5);
-    if (doom > state.doom) state.doom = doom;
-    const fx = e.effects || {};
-    if (fx.threatDelta) state.threat.level = clamp(state.threat.level + clamp(Math.round(num(fx.threatDelta)), -2, 2), 0, 5);
-    if (fx.locationId && getLocation(state, fx.locationId)) {
-      const ls = locState(state, fx.locationId);
-      if (fx.capturedBy !== undefined && fx.capturedBy !== null && getFaction(state, fx.capturedBy)) ls.heldBy = fx.capturedBy;
-      else if (fx.capturedBy === null && 'capturedBy' in fx && fx.liberated) ls.heldBy = null;
-      if (fx.dangerDelta) ls.dangerMod = clamp((ls.dangerMod || 0) + num(fx.dangerDelta), -3, 3);
-      if (fx.hazardDelta && state.location === fx.locationId) state.vitals.hazard = clamp(state.vitals.hazard + num(fx.hazardDelta));
-    }
-    if (fx.revealLocationId) revealLocation(state, fx.revealLocationId);
-    const visible = e.visible !== false;
-    queueEvent(state, { kind: 'world', index: i, text: str(e.event), visible, urgent: !!e.contact || (visible && doom >= 4), contact: !!e.contact, radioFreq: fx.radioFreq || null, doom });
-    if (visible) state.worldEvents.push({ day: num(e.day, 0), text: str(e.event), at: state.clock.minutes, doom });
+    if (timelineMinute(e) > to) return;
+    applyTimelineEntry(state, e, i);
   });
+}
+
+/** Everything that happened before the first day of play is applied silently and recorded as history. */
+function prefireTimeline(state) {
+  asArray(state.truth.timeline).forEach((e, i) => {
+    if (timelineMinute(e) < START_MINUTES) applyTimelineEntry(state, e, i, { history: true });
+  });
+}
+
+/** Apply one timeline entry: doom, threat, captures, reveals, utilities; then queue it for the GM (or file it as history). */
+export function applyTimelineEntry(state, e, i, { history = false } = {}) {
+  state.events.fired.push(i);
+  const doom = clamp(Math.round(num(e.doom, 0)), 1, 5);
+  if (doom > state.doom) state.doom = doom;
+  const fx = e.effects || {};
+  if (fx.threatDelta) state.threat.level = clamp(state.threat.level + clamp(Math.round(num(fx.threatDelta)), -2, 2), 0, 5);
+  if (fx.locationId && getLocation(state, fx.locationId)) {
+    const ls = locState(state, fx.locationId);
+    if (fx.capturedBy !== undefined && fx.capturedBy !== null && getFaction(state, fx.capturedBy)) ls.heldBy = fx.capturedBy;
+    else if (fx.capturedBy === null && 'capturedBy' in fx && fx.liberated) ls.heldBy = null;
+    if (fx.dangerDelta) ls.dangerMod = clamp((ls.dangerMod || 0) + num(fx.dangerDelta), -3, 3);
+    if (fx.hazardDelta && state.location === fx.locationId && !history) state.vitals.hazard = clamp(state.vitals.hazard + num(fx.hazardDelta));
+  }
+  if (fx.revealLocationId) revealLocation(state, fx.revealLocationId);
+  if (fx.utilities && typeof fx.utilities === 'object') {
+    for (const k of UTILITY_KEYS) if (typeof fx.utilities[k] === 'boolean') state.utilities[k] = fx.utilities[k];
+  }
+  const visible = e.visible !== false;
+  const at = history ? timelineMinute(e) : state.clock.minutes;
+  if (visible) state.worldEvents.push({ day: num(e.day, 0), text: str(e.event), at, doom, history });
+  if (!history) queueEvent(state, { kind: 'world', index: i, text: str(e.event), visible, urgent: !!e.contact || (visible && doom >= 4), contact: !!e.contact, radioFreq: fx.radioFreq || null, doom, inciting: i === state.truth.incitingIndex });
+  return e;
 }
 
 function onNewDay(state) {
@@ -129,8 +204,10 @@ function onNewDay(state) {
   state.weather.today = weatherFor(state, day);
   state.stats.days = day;
   if (!state.shelter || state.shelter.locationId !== state.location) state.stats.nightsOutside++;
-  const raid = nightlyRaidRoll(state); if (raid) queueEvent(state, raid);
+  const raid = state.phase === 'prologue' ? null : nightlyRaidRoll(state); if (raid) queueEvent(state, raid);
   burnFuel(state);
+  // Without power the fridge is a cupboard: fresh and frozen food turns.
+  if (state.shelter && !state.utilities?.power) for (const it of state.shelter.stash) if (it.category === 'food' && /frozen|fresh|eggs|leftovers|cheese|milk|bread|meat|fish fillet|yogh?urt|salad|apples|potatoes/i.test(it.name)) it.condition = Math.max(5, it.condition - 20);
   for (const ev of dailyUpkeep(state)) queueEvent(state, ev);
   for (const ev of checkBetrayals(state)) queueEvent(state, ev);
   for (const k of Object.keys(state.threat.local)) state.threat.local[k] = Math.max(0, state.threat.local[k] - 1);
@@ -290,9 +367,19 @@ export function checkEnd(state) {
   const day = dayOf(state.clock.minutes);
   if (state.vitals.health <= 0) state.ended = { kind: 'death', at: state.clock.minutes, cause: state.deathCause || deathCauseFromState(state) };
   else if (state.escapeRequested && endingAvailable(state)) state.ended = { kind: 'escape', at: state.clock.minutes };
-  else if (day > state.clock.deadlineDay) state.ended = { kind: 'deadline', at: state.clock.minutes };
+  else if (state.clock.deadlineDay != null && day > state.clock.deadlineDay) state.ended = { kind: 'deadline', at: state.clock.minutes };
   if (state.ended) state.phase = 'ended';
   return state.ended || null;
+}
+/** The deadline passed and the player chose to keep surviving: no clock now, only the days. */
+export function reopenAfterDeadline(state) {
+  if (!state.ended || state.ended.kind !== 'deadline') return false;
+  state.deadlinePassed = state.clock.deadlineDay;
+  state.ended = null; state.debrief = null; state.phase = 'play'; state.escapeRequested = false;
+  state.clock.deadlineDay = null;
+  addLog(state, 'system', `Day ${state.deadlinePassed} has come and gone. The record stays open: there is no deadline now, only the days, and whatever is still out there.`);
+  queueEvent(state, { kind: 'world', text: 'The day the survivor had been counting down to has passed. Whatever was going to happen by then has happened, or never will.', visible: true, urgent: true, doom: state.doom });
+  return true;
 }
 export function retire(state) {
   if (!state.ended) { state.ended = { kind: 'retired', at: state.clock.minutes }; state.phase = 'ended'; }
@@ -318,7 +405,8 @@ export function computeScore(state) {
   const hopes = asArray(t.ending?.falseHopes);
   const pursued = hopes.filter(f => state.flags.includes(`pursued_${f.id}`)).length;
   score += Math.max(0, hopes.length - pursued) * 2;
-  if (e.kind === 'death') score += Math.round(10 * Math.min(1, day / Math.max(1, num(t.deadlineDay, 30))));
+  if (e.kind === 'death') score += Math.round(10 * Math.min(1, day / Math.max(1, num(state.clock.deadlineDay ?? t.deadlineDay, 30))));
+  if (state.deadlinePassed != null) score += Math.min(10, Math.max(0, day - state.deadlinePassed));
   score -= state.hints * 3;
   return clamp(Math.round(score), 0, 100);
 }

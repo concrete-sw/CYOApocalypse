@@ -70,15 +70,30 @@ try {
   step('new game');
   await page.fill('#survivorName', 'Dana Reyes');
   await page.selectOption('#background', 'nurse');
+  await page.fill('#homePlace', 'Port Hollis');
   await page.selectOption('#apocalypseType', 'pandemic');
+  await page.selectOption('#gameStart', 'onset');
   await page.selectOption('#difficulty', 'hardened');
-  await page.selectOption('#gameLength', 'standard');
+  await page.selectOption('#gameLength', '30');
   await page.click('#newGameForm button[type=submit]');
   await page.waitForSelector('#screen-desktop:not(.hidden)', { timeout: 30000 });
   await idle();
   let s = await state();
   if (s.turnCount !== 1 || s.phase !== 'prologue') throw new Error(`expected prologue turn 1, got turn ${s.turnCount} phase ${s.phase}`);
   if (!(await page.textContent('#topRegion')).includes('CASCADE REACH')) throw new Error('top bar should carry the region');
+  if (!(await page.textContent('#topDay')).includes('TUE 14 OCT 2025')) throw new Error('top bar should carry the calendar date');
+  if (s.shelter?.locationId !== 'loc1' || !s.shelter.stash.some(i => i.category === 'food')) throw new Error('an ordinary start begins at home with a stocked pantry');
+  if (!s.utilities?.power) throw new Error('the grid is up before the collapse');
+
+  step('dossier');
+  const card = await page.textContent('.log-stream .entry.briefing');
+  if (!/Dana Reyes/.test(card) || !/Tuesday 14 October 2025/.test(card) || !/Maya Okonkwo/.test(card) || !/Harrow Street/.test(card)) throw new Error('the dossier card should say who, when, where and whom you know');
+  await page.click('[data-win="dossier"]');
+  await page.waitForSelector('.win[data-win="dossier"] .dossier');
+  if (!(await page.textContent('.win[data-win="dossier"]')).includes('The record')) throw new Error('dossier panel should explain the record');
+  await page.click('.win[data-win="dossier"] .win-close');
+  await page.evaluate(() => { const st = window.cyoa.state; st.shelter.stash = st.shelter.stash.filter(i => !i.tags.includes('radio') && !i.tags.includes('walkie')); st.inventory.items = st.inventory.items.filter(i => !i.tags.includes('radio') && !i.tags.includes('walkie')); window.cyoa.updateTopbar(); });
+  if (!(await page.$('.dock button[data-win="radio"].unavailable'))) throw new Error('the Radio panel should be hidden without a radio');
 
   step('prologue');
   await cmd('Turn on the radio and listen');
@@ -102,6 +117,8 @@ try {
   if (!(await page.textContent('.win[data-win="companions"]')).includes('Maya Okonkwo')) throw new Error('companion panel should list Maya');
 
   step('inventory: eat and craft');
+  await page.evaluate(() => { const st = window.cyoa.state; st.vitals.hunger = 60; st.inventory.items.push({ id: 'itgran', name: 'Granola bar', category: 'food', tags: ['food'], qty: 1, weight: 0.2, condition: 90 }); });
+  s = await state();
   const hungerBefore = s.vitals.hunger;
   await cmd('eat granola');
   s = await state();
@@ -135,6 +152,16 @@ try {
   if (after.clock.minutes - s.clock.minutes < 120) throw new Error('"rest 2 hours" should advance the clock two hours');
   s = after;
 
+  step('radio appears with a radio; walkie-talkie calls');
+  await cmd('tune 162.400');
+  s = await state();
+  if (s.radio.log.length) throw new Error('tuning without a radio should not reach the dial');
+  await page.evaluate(() => { const st = window.cyoa.state; st.inventory.items.push({ id: 'itradio', name: 'Hand-crank radio', category: 'electronics', tags: ['radio'], qty: 1, weight: 0.6, condition: 90 }, { id: 'itwalkie', name: 'Walkie-talkies (pair)', category: 'electronics', tags: ['walkie'], qty: 2, weight: 0.3, condition: 90 }); window.cyoa.updateTopbar(); });
+  if (await page.$('.dock button[data-win="radio"].unavailable')) throw new Error('the Radio panel should appear once a radio is carried');
+  await cmd('call Maya, can you hear me?');
+  s = await state();
+  if (!s.radio.log.some(e => e.kind === 'call')) throw new Error('a walkie-talkie call should be logged');
+
   step('radio');
   await cmd('tune 162.400');
   s = await state();
@@ -149,7 +176,7 @@ try {
   if (regions !== 12) throw new Error(`expected 12 body regions, got ${regions}`);
   const bars = await page.$$eval('.win[data-win="status"] .vital', els => els.length);
   if (bars !== 7) throw new Error(`expected 7 vitals bars, got ${bars}`);
-  await page.evaluate(() => { const st = window.cyoa.state; st.body.injuries.push({ id: 'injtest', region: 'leftArm', type: 'cut', severity: 2, treated: false, infected: false, at: st.clock.minutes, progress: 0 }); window.cyoa.wm.refresh('status'); });
+  await page.evaluate(() => { const st = window.cyoa.state; st.body.injuries.push({ id: 'injtest', region: 'leftArm', type: 'cut', severity: 2, treated: false, infected: false, at: st.clock.minutes, progress: 0 }); if (!st.inventory.items.some(i => i.tags.includes('bandage'))) st.inventory.items.push({ id: 'itband', name: 'Bandage', category: 'medical', tags: ['bandage'], qty: 2, weight: 0.1, condition: 100 }); window.cyoa.wm.refresh('status'); });
   await page.waitForSelector('.win[data-win="status"] .body-fig .region.sev2');
   await page.click('.win[data-win="status"] button:has-text("Treat")');
   s = await state();
@@ -229,8 +256,21 @@ try {
   s = await state();
   if (s.companions.n1.status !== 'away' || !s.pending.length) throw new Error('Maya should be away on assignment');
 
+  step('the deadline passes: keep surviving, and the world keeps moving');
+  const tlBefore = s.truth.timeline.length;
+  await page.evaluate(() => { const st = window.cyoa.state; st.clock.minutes = 31 * 1440 + 8 * 60; st.vitals.health = 100; st.vitals.thirst = 90; st.vitals.hunger = 90; window.cyoa.updateTopbar(); });
+  await page.fill('#cmdInput', 'wait 1'); await page.press('#cmdInput', 'Enter');
+  await page.waitForSelector('#modal[open]', { timeout: 30000 });
+  if (!/deadline has passed/i.test(await page.textContent('#modal'))) throw new Error('the deadline should offer a choice');
+  await page.click('#modal .btn.primary');
+  await page.waitForTimeout(200); await idle();
+  s = await state();
+  if (s.ended || s.clock.deadlineDay != null || s.deadlinePassed !== 30) throw new Error('keeping on should reopen the record without a deadline');
+  if (!(await page.textContent('#topDeadline')).includes('NO CLOCK')) throw new Error('top bar should show that the clock is gone');
+  if (s.truth.timeline.length <= tlBefore) throw new Error('the timeline should have been extended once it ran out');
+
   step('ending: the way out');
-  await page.evaluate(() => { const st = window.cyoa.state; st.clock.minutes = 19 * 1440 + 9 * 60; st.flags.push('annie_trusts_you', 'has_diesel'); if (!st.discovered.locations.includes('loc8')) st.discovered.locations.push('loc8'); st.companions.n1.status = 'with'; st.pending = []; window.cyoa.updateTopbar(); window.cyoa.wm.refreshAll(); });
+  await page.evaluate(() => { const st = window.cyoa.state; st.clock.minutes = 19 * 1440 + 9 * 60; st.flags.push('annie_trusts_you', 'has_diesel'); if (!st.discovered.locations.includes('loc8')) st.discovered.locations.push('loc8'); st.companions.n1.status = 'with'; st.companions.n1.assignment = null; st.pending = []; window.cyoa.updateTopbar(); window.cyoa.wm.refreshAll(); });
   await cmd('go dunmore');
   s = await state();
   if (s.location !== 'loc8') throw new Error(`expected loc8, got ${s.location}`);
@@ -244,7 +284,26 @@ try {
   if (!/TRUTH UNSEALED/.test(debrief) || !/Meridian/.test(debrief) || !/hidden timeline/i.test(debrief)) throw new Error('debrief should reveal the truth and the timeline');
   if (!/\d+ \/ 100/.test(debrief)) throw new Error('debrief should show a score');
 
-  step('continue in this world');
+  step('continue the story: chapter two');
+  const packBefore = s.inventory.items.length;
+  await page.click('#debriefBody button:has-text("Continue the story")');
+  await page.waitForSelector('#modal[open]');
+  await page.click('#modal .btn.primary');
+  await page.waitForSelector('#screen-desktop:not(.hidden)', { timeout: 30000 });
+  await idle();
+  s = await state();
+  if (s.chapter !== 2 || s.lineage?.length !== 1 || s.phase !== 'play' || s.turnCount !== 1) throw new Error(`chapter two should open in play: chapter ${s.chapter}, lineage ${s.lineage?.length}, phase ${s.phase}, turn ${s.turnCount}`);
+  if (s.companions.n1?.status !== 'with') throw new Error('Maya should have come along');
+  if (s.inventory.items.length < Math.min(3, packBefore)) throw new Error('the pack should carry over');
+  if (!/CHAPTER 2/.test(await page.textContent('.log-stream .entry.briefing'))) throw new Error('the dossier should say chapter 2');
+  if (!(await page.textContent('.log-stream')).includes('SITUATION REPORT')) throw new Error('a mid-collapse start posts the situation report');
+
+  step('end by choice, then continue in this world');
+  await cmd('end my story');
+  await page.waitForSelector('#modal[open]');
+  await page.click('#modal .btn.danger');
+  await page.waitForSelector('#screen-debrief:not(.hidden)', { timeout: 30000 });
+  await idle();
   await page.click('#debriefBody button:has-text("Continue in this world")');
   await page.waitForSelector('#modal[open]');
   await page.fill('#modal input', 'Second Survivor');
