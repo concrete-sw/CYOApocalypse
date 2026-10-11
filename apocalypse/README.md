@@ -39,7 +39,7 @@ laptop or a tablet. Your key is stored only in your browser (if you tick
 | Anthropic (Claude) | <https://console.anthropic.com/settings/keys> | Direct browser calls supported. Default `claude-sonnet-5-5`; thinking runs at low effort for turns and medium for building the world. |
 | OpenAI | <https://platform.openai.com/api-keys> | Default `gpt-4.1`. Reasoning models (`gpt-5`, `o4-mini`) work too. |
 | Google Gemini | <https://aistudio.google.com/apikey> | Free tier available. Default `gemini-2.5-flash` (thinking off for speed); `gemini-2.5-pro` thinks and is slower. |
-| DeepSeek | <https://platform.deepseek.com/api_keys> | Default `deepseek-chat`. Output is capped at 8k tokens; a cut-off world is continued in a second call. |
+| DeepSeek | <https://platform.deepseek.com/api_keys> | Default `deepseek-chat`. Replies are capped at 8k tokens, so the world is built in three parts. `deepseek-reasoner` works too but thinks in silence for a while before any text appears. |
 | xAI (Grok) | <https://console.x.ai/> | Default `grok-4`. |
 | Groq | <https://console.groq.com/keys> | Fast open-weight models. |
 | Mistral | <https://console.mistral.ai/api-keys/> | |
@@ -52,9 +52,14 @@ rejects browser calls (the browser console shows a CORS error), run a small
 proxy that adds the `Access-Control-Allow-Origin` header and point the
 **Custom** provider at it.
 
-**Cost and model choice.** Building the world is one large call (roughly 7 to
-10k output tokens; if the model's output limit cuts it off, the game asks it to
-continue and stitches the halves). Each turn sends the whole hidden world plus
+**Cost and model choice.** Building the world is one large call (roughly 8 to
+12k output tokens) on models with big output limits, or three smaller calls
+(the setting, the people, the plot, each seeing what came before) on models
+that cannot write that much at once; a one-shot reply that still gets cut off
+is continued, and if that fails the game switches to parts by itself. A
+provider that rejects a parameter (an output limit above its cap, JSON mode,
+temperature on a reasoning model) says so, and the game adapts the request
+and retries. Each turn sends the whole hidden world plus
 your state, so a standard game is several thousand input tokens per turn; the
 world rides in the system prompt so providers with prefix caching (Anthropic,
 OpenAI, DeepSeek, Gemini) charge most of it at the cached rate. A fast mid-tier
@@ -63,10 +68,11 @@ write better people. Small open-weight models (8B local models, most free-tier
 Groq models) rarely manage the long world JSON and will fail to build a world
 or fall back to plain text often.
 
-**"Could not build the world: ... not parseable JSON".** The model's reply
-did not parse after three tries. Usually the output was cut off (pick a model
-with a larger output limit, or a short game) or the model is too small to
-write a long, strict JSON document (pick a stronger one). The raw reply is
+**"Could not build the world: ..."** The model's replies did not produce a
+valid world after three rounds. If the message says even one part was cut
+off, the model's output limit is very small (pick another model); otherwise
+the model is too weak to write long, strict JSON (pick a stronger one, or
+retry: worlds are random and the next one may pass). The raw reply is
 printed to the browser console (F12) and kept at `window.cyoa.lastRawWorld`
 so you can see what came back.
 
@@ -295,7 +301,7 @@ Three automated checks:
 
 ```bash
 node apocalypse/dev/engine-check.mjs     # the code-owned systems and the tolerant JSON parser, in Node
-node apocalypse/dev/provider-check.mjs   # streaming, finish reasons, and a cut-off world being continued and stitched
+node apocalypse/dev/provider-check.mjs   # streaming, finish reasons, one-shot and three-part worlds, cut-off replies continued, provider rejections adapted
 node apocalypse/dev/build.js && node apocalypse/dev/playthrough.mjs   # full UI playthrough with Playwright
 ```
 

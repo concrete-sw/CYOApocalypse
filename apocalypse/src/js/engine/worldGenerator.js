@@ -2,7 +2,7 @@
 // model's output limit is continued in a follow-up call and stitched together;
 // invalid worlds are regenerated with the validation errors fed back.
 
-import { buildWorldGenerationPrompt, pickSeed } from '../prompts/worldGeneration.js';
+import { buildWorldGenerationPrompt, buildWorldPartPrompt, pickSeed, WORLD_PARTS } from '../prompts/worldGeneration.js';
 import { buildTimelineExtensionPrompt } from '../prompts/extension.js';
 import { variantFor } from './apocalypses.js';
 import { validateWorld, normalizeWorld, deepClean, stripStamp, hourFromText, UTILITIES } from './schema.js';
@@ -14,67 +14,162 @@ import { normalizeFreq } from './radio.js';
 import { getLocation, getNpc, getFaction } from './world.js';
 
 const MAX_CONTINUATIONS = 2;
+const SYSTEM = 'You are a meticulous designer of survival-fiction worlds who outputs only valid JSON: no markdown fences, no commentary, no comments inside the JSON.';
+// Models that cannot write the whole world in one reply write it in parts.
+const PARTS_BELOW_CAP = 16384;
 
 /**
  * Generate and validate a world. settings carries the player's choices
  * (apocalypse, difficulty, lengthDays, startDay, homePlace, customBackground...);
  * a variety seed and a variant of the apocalypse are drawn here unless given.
  * continuation describes the previous chapter when the story moves on.
+ *
+ * Two strategies: one call for the whole document (models with large output
+ * limits), or three parts (setting, people, plot), each seeing the parts
+ * written before it, for models with small output limits or when a one-shot
+ * reply is cut off. settings.generation may force 'single' or 'parts'.
  */
 export async function generateWorld({ provider, apiKey, model, baseUrl, settings, survivor, onProgress, maxAttempts = 3, signal, continuation = null }) {
   const seed = settings.seed || pickSeed();
   const variant = settings.variant ?? variantFor(settings.apocalypseId);
-  const prompt = buildWorldGenerationPrompt({ ...settings, survivor, seed, variant, continuation });
-  const system = 'You are a meticulous designer of survival-fiction worlds who outputs only valid JSON: no markdown fences, no commentary, no comments inside the JSON.';
-  let lastProblems = [];
-  let lastText = '';
-  let truncated = false;
+  const args = { ...settings, survivor, seed, variant, continuation };
+  const opts = { apiKey, model, baseUrl, json: true, maxTokens: 32000, temperature: 0.9, effort: 'medium', signal, system: SYSTEM };
+  const vopts = { startDay: settings.startDay, custom: survivor?.background === 'custom' };
+  const cap = typeof provider.outputCap === 'function' ? provider.outputCap(model) : Infinity;
+  const strategy = settings.generation && settings.generation !== 'auto' ? settings.generation : (provider.worldInParts || cap <= PARTS_BELOW_CAP) ? 'parts' : 'single';
+  const thinking = /reason|think|\bo[1-9]\b|gpt-5|\br1\b/i.test(String(model || provider.defaultModel || ''));
+  const note = thinking ? ' (a thinking model works in silence for a while before any text appears)' : '';
+  const finish = parsed => { parsed.seed = seed; parsed.variant = variant || null; return normalizeWorld(parsed, settings); };
+  if (strategy === 'single') {
+    const r = await generateSingle({ provider, opts, args, vopts, onProgress, maxAttempts, signal, note });
+    if (r.world) return finish(r.world);
+    if (!r.truncated) throw r.error;
+    onProgress?.('The whole world does not fit this model\'s output limit; building it in three parts instead...');
+  }
+  const r = await generateInParts({ provider, opts, args, vopts, onProgress, maxRounds: maxAttempts, signal, note });
+  if (r.world) return finish(r.world);
+  throw r.error;
+}
+
+/** One request, continued and stitched if the model's output limit cuts it off. */
+async function callWithContinuation({ provider, opts, messages, firstKey, onProgress, label }) {
+  let chars = 0;
+  let { text, finishReason } = await completeWithMeta(provider, { ...opts, messages }, (chunk, t) => { chars = t.length; onProgress?.(`${label}... ${chars} chars`); });
+  if (finishReason === 'refusal') throw new Error('The model declined to write this world. Try another apocalypse or model.');
+  for (let c = 0; c < MAX_CONTINUATIONS && (finishReason === 'length' || (finishReason == null && looksTruncated(text))); c++) {
+    onProgress?.(`${label}: the reply was cut off at ${chars} chars; asking the model to continue (${c + 1} of ${MAX_CONTINUATIONS})...`);
+    const tail = text.slice(-160).replace(/\s+/g, ' ');
+    const cont = await completeWithMeta(provider, {
+      ...opts, json: false,
+      messages: [...messages, { role: 'assistant', content: text }, { role: 'user', content: `Your output was cut off before the JSON ended. It currently ends with: ${tail}\nContinue EXACTLY from where it stopped, starting with the very next character after that. Output only the remaining JSON: do not repeat anything already written, do not restart the object, no fences, no commentary.` }]
+    }, (chunk, t) => { onProgress?.(`${label}: continuing... ${chars + t.length} chars`); });
+    // A model that restarts the whole document instead of continuing it is taken at its word.
+    const restart = new RegExp(`^\\s*(?:\`\`\`(?:json)?\\s*)?\\{\\s*"${firstKey}"\\s*:`);
+    text = restart.test(cont.text) ? cont.text : stitch(text, cont.text);
+    chars = text.length;
+    finishReason = cont.finishReason;
+  }
+  return { text, finishReason, truncated: finishReason === 'length' || looksTruncated(text) };
+}
+
+async function generateSingle({ provider, opts, args, vopts, onProgress, maxAttempts, signal, note }) {
+  const prompt = buildWorldGenerationPrompt(args);
+  let lastProblems = [], lastText = '', truncated = false, everTruncated = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    onProgress?.(`Building the world (attempt ${attempt} of ${maxAttempts})...`, 0);
+    const label = `Building the world (attempt ${attempt} of ${maxAttempts})${note}`;
+    onProgress?.(`${label}...`);
     const messages = [{ role: 'user', content: prompt }];
-    if (attempt > 1 && lastProblems.length) {
-      messages[0].content += `\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Fix every problem below and output the complete corrected JSON:\n- ${lastProblems.join('\n- ')}`;
-    }
-    let chars = 0;
+    if (attempt > 1 && lastProblems.length) messages[0].content += `\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Fix every problem below and output the complete corrected JSON:\n- ${lastProblems.join('\n- ')}`;
     try {
-      const opts = { apiKey, model, baseUrl, json: true, maxTokens: 32000, temperature: 0.9, effort: 'medium', signal, system };
-      let { text, finishReason } = await completeWithMeta(provider, { ...opts, messages }, (chunk, t) => { chars = t.length; onProgress?.(`Building the world (attempt ${attempt})... ${chars} chars`, chars); });
-      if (finishReason === 'refusal') throw new Error('The model declined to write this world. Try another apocalypse or model.');
-      // Continue a reply that stopped at the output limit.
-      for (let c = 0; c < MAX_CONTINUATIONS && (finishReason === 'length' || (finishReason == null && looksTruncated(text))); c++) {
-        onProgress?.(`The reply was cut off at ${chars} chars; asking the model to continue (${c + 1} of ${MAX_CONTINUATIONS})...`, chars);
-        const cont = await completeWithMeta(provider, {
-          ...opts, json: false,
-          messages: [...messages, { role: 'assistant', content: text }, { role: 'user', content: 'Your output was cut off before the JSON ended. Continue EXACTLY from where it stopped, starting with the very next character. Output only the remaining JSON: do not repeat anything already written, do not restart the object, no fences, no commentary.' }]
-        }, (chunk, t) => { onProgress?.(`Continuing the world... ${chars + t.length} chars`, chars + t.length); });
-        // A model that restarts the whole document instead of continuing it is taken at its word.
-        text = /^\s*\{\s*"title"\s*:/.test(cont.text) ? cont.text : stitch(text, cont.text);
-        chars = text.length;
-        finishReason = cont.finishReason;
-      }
-      lastText = text;
-      truncated = finishReason === 'length' || looksTruncated(text);
-      const parsed = deepClean(extractJSON(text));
-      lastProblems = validateWorld(parsed, { startDay: settings.startDay, custom: survivor?.background === 'custom' });
-      if (lastProblems.length === 0) { parsed.seed = seed; parsed.variant = variant || null; return normalizeWorld(parsed, settings); }
-      if (truncated) lastProblems.unshift('Your output was cut off at the output token limit: write a more compact world (shorter descriptions, no padding) so the whole JSON fits.');
-      onProgress?.(`Validation failed: ${lastProblems.slice(0, 3).join('; ')}`, chars);
+      const r = await callWithContinuation({ provider, opts, messages, firstKey: 'title', onProgress, label });
+      lastText = r.text; truncated = r.truncated; everTruncated = everTruncated || truncated;
+      const parsed = deepClean(extractJSON(r.text));
+      lastProblems = validateWorld(parsed, vopts);
+      if (lastProblems.length === 0) return { world: parsed };
+      if (truncated) break;   // a cut-off document cannot be fixed by asking for more of it
+      onProgress?.(`Validation failed: ${lastProblems.slice(0, 3).join('; ')}`);
     } catch (err) {
-      if (signal?.aborted) throw err;
-      if (/declined/.test(err.message)) throw err;
+      if (signal?.aborted || /declined/.test(err.message)) throw err;
+      if (truncated || looksTruncated(lastText)) { everTruncated = true; lastProblems = ['Your output was cut off at the output token limit and could not be parsed.']; break; }
       const tail = lastText ? ` The reply ended with: …${lastText.slice(-120).replace(/\s+/g, ' ')}` : '';
-      lastProblems = [truncated || looksTruncated(lastText)
-        ? 'Your output was cut off at the output token limit and could not be parsed: write a more compact world (shorter descriptions, no padding) so the whole JSON fits.'
-        : `Output was not parseable JSON (${err.message}).${tail} Output the whole object as valid JSON with no comments, fences or trailing text.`];
-      onProgress?.(`Attempt ${attempt} failed: ${err.message}`, chars);
+      lastProblems = [`Output was not parseable JSON (${err.message}).${tail} Output the whole object as valid JSON with no comments, fences or trailing text.`];
+      onProgress?.(`Attempt ${attempt} failed: ${err.message}`);
     }
   }
-  const hint = truncated || looksTruncated(lastText)
-    ? ' The model\'s output limit is too small for a world of this size: pick a model with a larger output limit, or a shorter game.'
-    : ' The model is not producing valid JSON; a stronger model (Claude Sonnet, GPT-4.1, Gemini 2.5 Flash, DeepSeek) usually fixes this.';
-  const error = new Error(`Could not build a valid world after ${maxAttempts} attempts. Last problems: ${lastProblems.join('; ')}${hint}`);
+  const error = new Error(`Could not build a valid world after ${maxAttempts} attempts. Last problems: ${lastProblems.join('; ')} A stronger model (Claude Sonnet, GPT-4.1, Gemini 2.5 Flash, DeepSeek) usually fixes this.`);
   error.raw = lastText;
-  throw error;
+  return { error, truncated: everTruncated };
+}
+
+/** The world in three parts, each validated for shape, the whole validated together, failing parts rewritten with the errors fed back. */
+async function generateInParts({ provider, opts, args, vopts, onProgress, maxRounds, signal, note }) {
+  const parts = {};
+  const pending = Object.fromEntries(WORLD_PARTS.map(p => [p.id, []]));
+  let lastProblems = [], lastText = '', truncated = false;
+  const written = exclude => { const o = {}; let any = false; for (const p of WORLD_PARTS) if (p.id !== exclude && parts[p.id]) { Object.assign(o, parts[p.id]); any = true; } return any ? o : null; };
+  for (let round = 1; round <= maxRounds; round++) {
+    for (const part of WORLD_PARTS) {
+      if (parts[part.id] && !pending[part.id].length) continue;
+      const n = WORLD_PARTS.indexOf(part) + 1;
+      const label = `Building the world: part ${n} of ${WORLD_PARTS.length}${round > 1 ? ` (round ${round})` : ''}${note}`;
+      onProgress?.(`${label}...`);
+      const messages = [{ role: 'user', content: buildWorldPartPrompt(args, { part, soFar: written(part.id), problems: pending[part.id] }) }];
+      let r;
+      try { r = await callWithContinuation({ provider, opts, messages, firstKey: part.keys[0], onProgress, label }); }
+      catch (err) { if (signal?.aborted || /declined/.test(err.message)) throw err; pending[part.id] = [`The request failed (${err.message}); write the part again.`]; lastProblems = pending[part.id]; continue; }
+      lastText = r.text; truncated = r.truncated;
+      let obj = null;
+      try { obj = deepClean(extractJSON(r.text)); } catch (err) { pending[part.id] = [r.truncated ? 'Your output was cut off at the output token limit and could not be parsed: write this part more compactly (shorter descriptions, no padding).' : `Output was not parseable JSON (${err.message}). Output the whole part as valid JSON.`]; }
+      if (!pending[part.id].length || parts[part.id] === undefined) {
+        if (obj && typeof obj === 'object') {
+          const problems = [...part.keys.filter(k => obj[k] === undefined).map(k => `missing top-level key "${k}"`), ...structuralProblems(part, obj)];
+          if (problems.length) pending[part.id] = problems;
+          else { const picked = {}; for (const k of part.keys) picked[k] = obj[k]; parts[part.id] = picked; pending[part.id] = []; continue; }
+        } else if (!pending[part.id].length) pending[part.id] = ['Output was not a JSON object.'];
+      }
+      lastProblems = pending[part.id];
+      onProgress?.(`Part ${n} needs another pass: ${pending[part.id][0]}`);
+    }
+    if (WORLD_PARTS.some(p => !parts[p.id])) continue;
+    const merged = Object.assign({}, ...WORLD_PARTS.map(p => parts[p.id]));
+    lastProblems = validateWorld(merged, vopts);
+    if (!lastProblems.length) return { world: merged };
+    for (const p of WORLD_PARTS) pending[p.id] = [];
+    for (const prob of lastProblems) pending[partFor(prob)].push(prob);
+    onProgress?.(`Validation failed: ${lastProblems.slice(0, 3).join('; ')}`);
+  }
+  const error = new Error(`Could not build a valid world after ${maxRounds} rounds. Last problems: ${lastProblems.join('; ')}${truncated ? ' Even one part of the world did not fit this model\'s output limit: pick a model with a larger output limit.' : ' A stronger model (Claude Sonnet, GPT-4.1, Gemini 2.5 Flash, DeepSeek) usually fixes this.'}`);
+  error.raw = lastText;
+  return { error };
+}
+
+/** Cheap shape checks for a part before the whole world is validated, so an obviously short part is rewritten at once. */
+function structuralProblems(part, obj) {
+  const out = [];
+  if (part.id === 'setting') {
+    const locs = asArray(obj.locations);
+    if (locs.length < 8 || locs.length > 12) out.push(`need 8-12 locations, got ${locs.length}`);
+    if (!locs.some(l => asArray(l?.hidden).some(h => h && h.clueId))) out.push('at least one location needs a hidden entry with clueId "c1" (the clue found by searching; the clue itself is written in part 3)');
+    if (!str(obj.prologue?.theMoment)) out.push('prologue.theMoment missing');
+  } else if (part.id === 'people') {
+    const f = asArray(obj.factions).length, n = asArray(obj.npcs).length;
+    if (f < 2 || f > 3) out.push(`need 2-3 factions, got ${f}`);
+    if (n < 6 || n > 8) out.push(`need 6-8 npcs, got ${n}`);
+  } else {
+    if (asArray(obj.timeline).length < 10) out.push(`timeline needs at least 10 entries, got ${asArray(obj.timeline).length}`);
+    if (!obj.ending?.trueWayOut) out.push('ending.trueWayOut missing');
+    if (asArray(obj.radio?.channels).length < 4) out.push(`radio.channels needs at least 4 entries, got ${asArray(obj.radio?.channels).length}`);
+  }
+  return out;
+}
+
+/** Which part a validation problem belongs to, so only that part is rewritten. */
+export function partFor(problem) {
+  const p = String(problem).toLowerCase();
+  if (/heldby unknown faction/.test(p)) return 'setting';
+  if (/clue|ending|way ?out|window|requirement|timeline|radio|channel|false ?hope|contact|doom|inciting|frequency|hidden entry/.test(p)) return 'plot';
+  if (/npc|faction|betray|knowntosurvivor/.test(p)) return 'people';
+  return 'setting';
 }
 
 /** Join a cut-off reply and its continuation, dropping any overlap the model repeated. */

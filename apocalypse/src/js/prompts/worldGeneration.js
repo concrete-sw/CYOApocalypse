@@ -84,7 +84,49 @@ export function resolveStartDay(start, rnd = Math.random) {
   }
 }
 
-export function buildWorldGenerationPrompt({ apocalypseId, apocalypseName, customPremise, difficulty, lengthDays, openEnded, startDay = 0, homePlace, customBackground, survivor, seed, variant, continuation }) {
+/** The single-call prompt: the whole world in one JSON document. */
+export function buildWorldGenerationPrompt(args) {
+  return `${worldBrief(args)}
+
+Reply with the JSON object only. No markdown fences, no commentary.`;
+}
+
+// Models with small output limits write the world in three parts, each a
+// subset of the top-level keys, each seeing what was written before it.
+export const WORLD_PARTS = [
+  { id: 'setting', label: 'the setting: the apocalypse, the region, the survivor, the prologue, the threat and the locations', keys: ['title', 'apocalypse', 'region', 'survivor', 'prologue', 'situationReport', 'threat', 'deadlineDay', 'locations'] },
+  { id: 'people', label: 'the people: the factions and the survivors', keys: ['factions', 'npcs'] },
+  { id: 'plot', label: 'the plot: the timeline, the ending and the radio', keys: ['timeline', 'ending', 'radio'] }
+];
+
+export function buildWorldPartPrompt(args, { part, soFar = null, problems = [] }) {
+  const n = WORLD_PARTS.indexOf(part) + 1;
+  return `${worldBrief(args)}
+
+THIS WORLD IS WRITTEN IN ${WORLD_PARTS.length} PARTS. YOU ARE WRITING PART ${n} OF ${WORLD_PARTS.length}: ${part.label}.
+Output ONE JSON object containing ONLY these top-level keys, each complete and final: ${part.keys.map(k => `"${k}"`).join(', ')}. Leave every other key out; the other parts are written separately. Follow the schema for each key exactly.
+${soFar ? `THE WORLD SO FAR (already written and final; keep every id, name and fact consistent with it; do not repeat it):\n${JSON.stringify(soFar)}` : 'Nothing has been written yet. The ids are fixed by convention and later parts will rely on them: locations loc1, loc2, ... (loc1 is the start location), factions f1, f2, f3, npcs n1 ... n8, clues c1 ... c5.'}
+${partNotes(part, soFar)}${problems.length ? `\n\nYOUR PREVIOUS VERSION OF THIS PART FAILED VALIDATION. Fix every problem below and output the complete corrected part:\n- ${problems.join('\n- ')}` : ''}
+
+Reply with the JSON object only. No markdown fences, no commentary.`;
+}
+
+function partNotes(part, soFar) {
+  const locs = soFar?.locations || [];
+  if (part.id === 'setting') return 'NOTES FOR THIS PART: locations may refer to factions by id in heldBy (f1, f2, f3; the factions are written in part 2 and will use exactly these ids). Mark the one or two hidden entries whose discovery is a clue to the way out with clueId "c1" (and "c2"); the clues themselves are written in part 3 and will use exactly these ids. Every other hidden entry has clueId null. deadlineDay is final here.';
+  if (part.id === 'people') {
+    const held = [...new Set(locs.map(l => l.heldBy).filter(Boolean))];
+    const start = soFar?.region?.startLocationId || 'loc1';
+    return `NOTES FOR THIS PART: ${held.length ? `the locations refer to these faction ids in heldBy: ${held.join(', ')}; define exactly those (and at most one more) with those ids.` : 'define 2 or 3 factions with ids f1, f2, f3.'} Every faction's baseLocationId and every npc's locationId must be one of: ${locs.map(l => `${l.id} (${l.name})`).join(', ') || 'the locations written in part 1'}. The survivor's lifeBefore and the prologue describe people from their ordinary life: make at least one of them an npc with knownToSurvivor true and relationToSurvivor set, living at or near the start location ${start}.`;
+  }
+  const slots = locs.flatMap(l => (l.hidden || []).filter(h => h && h.clueId).map(h => `${h.clueId} at ${l.id} (${l.name}: "${h.what}")`));
+  const npcs = (soFar?.npcs || []).map(x => `${x.id} ${x.name}`);
+  const facts = (soFar?.factions || []).map(f => `${f.id} ${f.name}${f.radioFreq ? ` (radio ${f.radioFreq})` : ''}`);
+  return `NOTES FOR THIS PART: ${slots.length ? `the locations hold hidden entries with these clue ids: ${slots.join('; ')}. ending.clues MUST contain a clue for each of those ids with source { "kind": "location", "id": that location } whose text matches what is hidden there.` : 'no location carries a clueId, so every clue has source kind "npc" or "radio".'} Add at least one clue with source kind "npc" (one of: ${npcs.join(', ') || 'the npcs of part 2'}) and one with kind "radio" (a frequency you define in radio.channels, carried by one of that channel's messages). Factions: ${facts.join('; ') || 'as written in part 2'}; include each faction radio frequency as a channel of kind "faction". trueWayOut.where and every falseHopes.where must be one of: ${locs.map(l => l.id).join(', ') || 'the location ids of part 1'}. deadlineDay is ${soFar?.deadlineDay ?? 'as fixed in part 1'}: the way-out window ends on or before it and the timeline runs up to it. Timeline effects use only existing location and faction ids.`;
+}
+
+/** The design brief shared by the single-call prompt and the part prompts. */
+export function worldBrief({ apocalypseId, apocalypseName, customPremise, difficulty, lengthDays, openEnded, startDay = 0, homePlace, customBackground, survivor, seed, variant, continuation }) {
   const apo = apocalypseById(apocalypseId);
   const S = Math.round(Number(startDay) || 0);
   const L = Math.max(7, Math.min(730, Math.round(Number(lengthDays) || 30)));
@@ -148,7 +190,5 @@ DESIGN REQUIREMENTS
 11. SIZE MATTERS: the whole document must stay under about 3800 words (roughly 6500 tokens) or it will be cut off. Location descriptions and npc backgrounds are 2-4 sentences, travelNotes and personality one sentence, radio messages one to three sentences, the prologue and situationReport within their word counts. Hit the minimum counts in the schema and stop; specific beats long.
 
 SCHEMA (follow exactly; no extra top-level keys):
-${WORLD_SCHEMA_TEXT}
-
-Reply with the JSON object only. No markdown fences, no commentary.`;
+${WORLD_SCHEMA_TEXT}`;
 }

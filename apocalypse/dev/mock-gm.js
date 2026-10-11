@@ -26,6 +26,13 @@ function words(text) { const m = text.match(/Survivor(?: says)?:\s*"?([^"\n]*)"?
 // request, to exercise the game's continue-and-stitch path.
 const TRUNCATE = process.env.MOCK_TRUNCATE === '1';
 const CUT = Math.floor(sampleWorld.length * 0.6);
+// MOCK_MAX_TOKENS=N rejects requests asking for more than N output tokens the
+// way DeepSeek does; MOCK_NO_JSON=1 rejects JSON mode. Both exercise the
+// adapter's adapt-and-retry path.
+const MAX_TOKENS = Number(process.env.MOCK_MAX_TOKENS || 0);
+const NO_JSON = process.env.MOCK_NO_JSON === '1';
+let lastServed = sampleWorld;   // the full text of the last world (or part) reply, for continuations
+const cut = full => { lastServed = full; return TRUNCATE ? { text: full.slice(0, Math.floor(full.length * 0.6)), finish: 'length' } : full; };
 
 // The sample world is written for a start on the day it begins. For other
 // start days the mock adjusts it the way a model would be asked to: signs
@@ -59,13 +66,21 @@ function worldFor(text) {
   return JSON.stringify(w);
 }
 
-function reply(text, msgs) {
+function reply(text, msgs, req) {
   if (text.includes('Reply with the single word READY')) return 'READY';
+  if (text.includes('ECHO MAX_TOKENS')) return String(req.max_tokens ?? req.max_completion_tokens ?? '');
   if (text.includes('Continue EXACTLY from where it stopped')) {
     const partial = [...msgs].reverse().find(m => m.role === 'assistant')?.content || '';
-    return { text: sampleWorld.slice(Math.max(0, partial.length - 24)), finish: 'stop' };
+    return { text: lastServed.slice(Math.max(0, partial.length - 24)), finish: 'stop' };
   }
-  if (text.includes('designing the hidden ground truth')) return TRUNCATE ? { text: sampleWorld.slice(0, CUT), finish: 'length' } : worldFor(text);
+  const part = text.match(/YOU ARE WRITING PART (\d) OF (\d)/);
+  if (part) {
+    const keys = [...(text.match(/ONLY these top-level keys, each complete and final: ([^\n]+)/)?.[1] || '').matchAll(/"([a-zA-Z]+)"/g)].map(m => m[1]);
+    const w = JSON.parse(worldFor(text));
+    const out = {}; for (const k of keys) if (k in w) out[k] = w[k];
+    return cut(JSON.stringify(out));
+  }
+  if (text.includes('designing the hidden ground truth')) return cut(worldFor(text));
   if (text.includes('scripted timeline has run out')) {
     const today = Number((text.match(/today is day (\d+)/) || [])[1] || 0);
     const mk = (d, h, event, extra = {}) => ({ day: today + d, hour: h, event, doom: 4, visible: true, contact: false, effects: {}, ...extra });
@@ -156,10 +171,13 @@ const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
   req.on('end', () => {
-    let msgs = [];
-    try { msgs = JSON.parse(body).messages || []; } catch { /* ignore */ }
+    let msgs = [], parsed = {};
+    try { parsed = JSON.parse(body); msgs = parsed.messages || []; } catch { /* ignore */ }
+    const asked = parsed.max_tokens ?? parsed.max_completion_tokens;
+    if (MAX_TOKENS && asked > MAX_TOKENS) { res.writeHead(400, { ...cors, 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: `Invalid max_tokens value, the valid range of max_tokens is [1, ${MAX_TOKENS}]`, type: 'invalid_request_error' } })); }
+    if (NO_JSON && parsed.response_format) { res.writeHead(400, { ...cors, 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'This model does not support response_format json_object', type: 'invalid_request_error' } })); }
     const last = [...msgs].reverse().find(m => m.role === 'user')?.content || '';
-    const out = reply(typeof last === 'string' ? last : JSON.stringify(last), msgs);
+    const out = reply(typeof last === 'string' ? last : JSON.stringify(last), msgs, parsed);
     const text = typeof out === 'string' ? out : out.text;
     const finish = typeof out === 'string' ? 'stop' : out.finish;
     res.writeHead(200, { ...cors, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });

@@ -25,7 +25,8 @@ export const PROVIDERS = [
   makeOpenAICompatible({
     id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com',
     defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'],
-    keyUrl: 'https://platform.deepseek.com/api_keys', notes: 'Inexpensive and capable at role-play. Output is capped at 8k tokens; the game continues a cut-off world in a second call.', maxOutputTokens: 8192
+    keyUrl: 'https://platform.deepseek.com/api_keys', notes: 'Inexpensive and capable at role-play. deepseek-chat replies are capped at 8k tokens, so the world is built in three parts; deepseek-reasoner thinks for a while before any text appears.',
+    maxOutputTokens: m => (/reasoner/.test(m) ? 65536 : 8192), worldInParts: true
   }),
   makeOpenAICompatible({
     id: 'xai', name: 'xAI (Grok)', baseUrl: 'https://api.x.ai/v1',

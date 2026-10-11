@@ -4337,30 +4337,50 @@ const { readSSE, throwForStatus } = __m["js/providers/sse.js"];
 // registry in index.js using makeOpenAICompatible().
 
 
-function makeOpenAICompatible({ id, name, baseUrl, defaultModel, models = [], keyUrl, notes = '', supportsJsonMode = true, allowCustomBaseUrl = false, maxOutputTokens = Infinity, maxTokensParam = 'max_tokens', noTemperatureFor = null }) {
+/**
+ * maxOutputTokens may be a number or a function of the model id. Providers that
+ * reject a parameter (a max_tokens above their cap, JSON mode, temperature on a
+ * reasoning model) say so in a 400; the request is adapted and retried, and
+ * what was learned is remembered for the session.
+ */
+function makeOpenAICompatible({ id, name, baseUrl, defaultModel, models = [], keyUrl, notes = '', supportsJsonMode = true, allowCustomBaseUrl = false, maxOutputTokens = Infinity, maxTokensParam = 'max_tokens', noTemperatureFor = null, worldInParts = false }) {
+  const learned = { caps: {}, noJson: new Set(), noTemperature: new Set() };
+  const capFor = m => Math.min(learned.caps[m] ?? Infinity, typeof maxOutputTokens === 'function' ? maxOutputTokens(m) : maxOutputTokens);
   return {
-    id, name, defaultModel, models, keyUrl, notes, allowCustomBaseUrl,
+    id, name, defaultModel, models, keyUrl, notes, allowCustomBaseUrl, worldInParts,
     defaultBaseUrl: baseUrl,
+    /** The largest reply this model can produce, as far as the game knows (Infinity when unknown). */
+    outputCap(model) { return capFor(model || defaultModel); },
 
     async *stream({ apiKey, model, system, messages, json = false, maxTokens = 4096, temperature = 0.8, baseUrl: overrideUrl, signal }) {
       const url = `${(overrideUrl || baseUrl).replace(/\/$/, '')}/chat/completions`;
       const m = model || defaultModel;
-      const body = {
-        model: m,
-        stream: true,
-        [maxTokensParam]: Math.min(maxTokens, maxOutputTokens),
-        messages: [
-          ...(system ? [{ role: 'system', content: system }] : []),
-          ...messages.map(x => ({ role: x.role, content: x.content }))
-        ]
-      };
-      // Reasoning models reject sampling parameters.
-      if (!(noTemperatureFor && noTemperatureFor.test(m))) body.temperature = temperature;
-      if (json && supportsJsonMode) body.response_format = { type: 'json_object' };
       const headers = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
-      await throwForStatus(res, name);
+      let res;
+      for (let attempt = 0; ; attempt++) {
+        const body = {
+          model: m,
+          stream: true,
+          [maxTokensParam]: Math.min(maxTokens, capFor(m)),
+          messages: [
+            ...(system ? [{ role: 'system', content: system }] : []),
+            ...messages.map(x => ({ role: x.role, content: x.content }))
+          ]
+        };
+        // Reasoning models reject sampling parameters.
+        if (!(noTemperatureFor && noTemperatureFor.test(m)) && !learned.noTemperature.has(m)) body.temperature = temperature;
+        if (json && supportsJsonMode && !learned.noJson.has(m)) body.response_format = { type: 'json_object' };
+        res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+        if (res.ok) break;
+        let detail = '';
+        try { detail = await res.clone().text(); } catch { /* ignore */ }
+        const fix = attempt < 3 && res.status === 400 ? adaptTo(detail, body, m) : null;
+        if (!fix) await throwForStatus(res, name);
+        if (fix.cap) learned.caps[m] = fix.cap;
+        if (fix.noJson) learned.noJson.add(m);
+        if (fix.noTemperature) learned.noTemperature.add(m);
+      }
       let finish = null;
       for await (const data of readSSE(res)) {
         if (data === '[DONE]') break;
@@ -4375,6 +4395,19 @@ function makeOpenAICompatible({ id, name, baseUrl, defaultModel, models = [], ke
       return finish === 'length' ? 'length' : finish === 'content_filter' ? 'refusal' : finish ? 'stop' : null;
     }
   };
+
+  /** Read a 400 and decide what to change: a smaller output cap, no JSON mode, no temperature. Null when nothing applies. */
+  function adaptTo(detail, body, m) {
+    const msg = (() => { try { const p = JSON.parse(detail); const e = p?.error?.message || p?.message || p?.error; return typeof e === 'string' ? e : JSON.stringify(e || detail); } catch { return String(detail || ''); } })();
+    const low = msg.toLowerCase();
+    if (/max_tokens|max_completion_tokens|output tokens|maximum.*tokens|tokens.*maximum|completion length/.test(low)) {
+      const nums = (msg.match(/\d{3,7}/g) || []).map(Number).filter(n => n >= 256 && n < (body[maxTokensParam] || Infinity));
+      if (nums.length) return { cap: Math.max(...nums) };
+    }
+    if (body.response_format && /response_format|json_object|json mode|json output|json schema/.test(low)) return { noJson: true };
+    if ('temperature' in body && /temperature|sampling|top_p/.test(low)) return { noTemperature: true };
+    return null;
+  }
 }
 
 return { makeOpenAICompatible };
@@ -4411,7 +4444,8 @@ const PROVIDERS = [
   makeOpenAICompatible({
     id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com',
     defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'],
-    keyUrl: 'https://platform.deepseek.com/api_keys', notes: 'Inexpensive and capable at role-play. Output is capped at 8k tokens; the game continues a cut-off world in a second call.', maxOutputTokens: 8192
+    keyUrl: 'https://platform.deepseek.com/api_keys', notes: 'Inexpensive and capable at role-play. deepseek-chat replies are capped at 8k tokens, so the world is built in three parts; deepseek-reasoner thinks for a while before any text appears.',
+    maxOutputTokens: m => (/reasoner/.test(m) ? 65536 : 8192), worldInParts: true
   }),
   makeOpenAICompatible({
     id: 'xai', name: 'xAI (Grok)', baseUrl: 'https://api.x.ai/v1',
@@ -4617,7 +4651,49 @@ function resolveStartDay(start, rnd = Math.random) {
   }
 }
 
-function buildWorldGenerationPrompt({ apocalypseId, apocalypseName, customPremise, difficulty, lengthDays, openEnded, startDay = 0, homePlace, customBackground, survivor, seed, variant, continuation }) {
+/** The single-call prompt: the whole world in one JSON document. */
+function buildWorldGenerationPrompt(args) {
+  return `${worldBrief(args)}
+
+Reply with the JSON object only. No markdown fences, no commentary.`;
+}
+
+// Models with small output limits write the world in three parts, each a
+// subset of the top-level keys, each seeing what was written before it.
+const WORLD_PARTS = [
+  { id: 'setting', label: 'the setting: the apocalypse, the region, the survivor, the prologue, the threat and the locations', keys: ['title', 'apocalypse', 'region', 'survivor', 'prologue', 'situationReport', 'threat', 'deadlineDay', 'locations'] },
+  { id: 'people', label: 'the people: the factions and the survivors', keys: ['factions', 'npcs'] },
+  { id: 'plot', label: 'the plot: the timeline, the ending and the radio', keys: ['timeline', 'ending', 'radio'] }
+];
+
+function buildWorldPartPrompt(args, { part, soFar = null, problems = [] }) {
+  const n = WORLD_PARTS.indexOf(part) + 1;
+  return `${worldBrief(args)}
+
+THIS WORLD IS WRITTEN IN ${WORLD_PARTS.length} PARTS. YOU ARE WRITING PART ${n} OF ${WORLD_PARTS.length}: ${part.label}.
+Output ONE JSON object containing ONLY these top-level keys, each complete and final: ${part.keys.map(k => `"${k}"`).join(', ')}. Leave every other key out; the other parts are written separately. Follow the schema for each key exactly.
+${soFar ? `THE WORLD SO FAR (already written and final; keep every id, name and fact consistent with it; do not repeat it):\n${JSON.stringify(soFar)}` : 'Nothing has been written yet. The ids are fixed by convention and later parts will rely on them: locations loc1, loc2, ... (loc1 is the start location), factions f1, f2, f3, npcs n1 ... n8, clues c1 ... c5.'}
+${partNotes(part, soFar)}${problems.length ? `\n\nYOUR PREVIOUS VERSION OF THIS PART FAILED VALIDATION. Fix every problem below and output the complete corrected part:\n- ${problems.join('\n- ')}` : ''}
+
+Reply with the JSON object only. No markdown fences, no commentary.`;
+}
+
+function partNotes(part, soFar) {
+  const locs = soFar?.locations || [];
+  if (part.id === 'setting') return 'NOTES FOR THIS PART: locations may refer to factions by id in heldBy (f1, f2, f3; the factions are written in part 2 and will use exactly these ids). Mark the one or two hidden entries whose discovery is a clue to the way out with clueId "c1" (and "c2"); the clues themselves are written in part 3 and will use exactly these ids. Every other hidden entry has clueId null. deadlineDay is final here.';
+  if (part.id === 'people') {
+    const held = [...new Set(locs.map(l => l.heldBy).filter(Boolean))];
+    const start = soFar?.region?.startLocationId || 'loc1';
+    return `NOTES FOR THIS PART: ${held.length ? `the locations refer to these faction ids in heldBy: ${held.join(', ')}; define exactly those (and at most one more) with those ids.` : 'define 2 or 3 factions with ids f1, f2, f3.'} Every faction's baseLocationId and every npc's locationId must be one of: ${locs.map(l => `${l.id} (${l.name})`).join(', ') || 'the locations written in part 1'}. The survivor's lifeBefore and the prologue describe people from their ordinary life: make at least one of them an npc with knownToSurvivor true and relationToSurvivor set, living at or near the start location ${start}.`;
+  }
+  const slots = locs.flatMap(l => (l.hidden || []).filter(h => h && h.clueId).map(h => `${h.clueId} at ${l.id} (${l.name}: "${h.what}")`));
+  const npcs = (soFar?.npcs || []).map(x => `${x.id} ${x.name}`);
+  const facts = (soFar?.factions || []).map(f => `${f.id} ${f.name}${f.radioFreq ? ` (radio ${f.radioFreq})` : ''}`);
+  return `NOTES FOR THIS PART: ${slots.length ? `the locations hold hidden entries with these clue ids: ${slots.join('; ')}. ending.clues MUST contain a clue for each of those ids with source { "kind": "location", "id": that location } whose text matches what is hidden there.` : 'no location carries a clueId, so every clue has source kind "npc" or "radio".'} Add at least one clue with source kind "npc" (one of: ${npcs.join(', ') || 'the npcs of part 2'}) and one with kind "radio" (a frequency you define in radio.channels, carried by one of that channel's messages). Factions: ${facts.join('; ') || 'as written in part 2'}; include each faction radio frequency as a channel of kind "faction". trueWayOut.where and every falseHopes.where must be one of: ${locs.map(l => l.id).join(', ') || 'the location ids of part 1'}. deadlineDay is ${soFar?.deadlineDay ?? 'as fixed in part 1'}: the way-out window ends on or before it and the timeline runs up to it. Timeline effects use only existing location and faction ids.`;
+}
+
+/** The design brief shared by the single-call prompt and the part prompts. */
+function worldBrief({ apocalypseId, apocalypseName, customPremise, difficulty, lengthDays, openEnded, startDay = 0, homePlace, customBackground, survivor, seed, variant, continuation }) {
   const apo = apocalypseById(apocalypseId);
   const S = Math.round(Number(startDay) || 0);
   const L = Math.max(7, Math.min(730, Math.round(Number(lengthDays) || 30)));
@@ -4681,12 +4757,10 @@ DESIGN REQUIREMENTS
 11. SIZE MATTERS: the whole document must stay under about 3800 words (roughly 6500 tokens) or it will be cut off. Location descriptions and npc backgrounds are 2-4 sentences, travelNotes and personality one sentence, radio messages one to three sentences, the prologue and situationReport within their word counts. Hit the minimum counts in the schema and stop; specific beats long.
 
 SCHEMA (follow exactly; no extra top-level keys):
-${WORLD_SCHEMA_TEXT}
-
-Reply with the JSON object only. No markdown fences, no commentary.`;
+${WORLD_SCHEMA_TEXT}`;
 }
 
-return { WORLD_SCHEMA_TEXT, pickSeed, START_LABEL, resolveStartDay, buildWorldGenerationPrompt };
+return { WORLD_SCHEMA_TEXT, pickSeed, START_LABEL, resolveStartDay, buildWorldGenerationPrompt, WORLD_PARTS, buildWorldPartPrompt, worldBrief };
 })();
 
 // ---- js/prompts/extension.js ----
@@ -5169,7 +5243,7 @@ return { extractJSON, looksTruncated, repairJSON, extractPartialNarrative };
 
 // ---- js/engine/worldGenerator.js ----
 __m["js/engine/worldGenerator.js"] = (() => {
-const { buildWorldGenerationPrompt, pickSeed } = __m["js/prompts/worldGeneration.js"];
+const { buildWorldGenerationPrompt, buildWorldPartPrompt, pickSeed, WORLD_PARTS } = __m["js/prompts/worldGeneration.js"];
 const { buildTimelineExtensionPrompt } = __m["js/prompts/extension.js"];
 const { variantFor } = __m["js/engine/apocalypses.js"];
 const { validateWorld, normalizeWorld, deepClean, stripStamp, hourFromText, UTILITIES } = __m["js/engine/schema.js"];
@@ -5194,67 +5268,162 @@ const { getLocation, getNpc, getFaction } = __m["js/engine/world.js"];
 
 
 const MAX_CONTINUATIONS = 2;
+const SYSTEM = 'You are a meticulous designer of survival-fiction worlds who outputs only valid JSON: no markdown fences, no commentary, no comments inside the JSON.';
+// Models that cannot write the whole world in one reply write it in parts.
+const PARTS_BELOW_CAP = 16384;
 
 /**
  * Generate and validate a world. settings carries the player's choices
  * (apocalypse, difficulty, lengthDays, startDay, homePlace, customBackground...);
  * a variety seed and a variant of the apocalypse are drawn here unless given.
  * continuation describes the previous chapter when the story moves on.
+ *
+ * Two strategies: one call for the whole document (models with large output
+ * limits), or three parts (setting, people, plot), each seeing the parts
+ * written before it, for models with small output limits or when a one-shot
+ * reply is cut off. settings.generation may force 'single' or 'parts'.
  */
 async function generateWorld({ provider, apiKey, model, baseUrl, settings, survivor, onProgress, maxAttempts = 3, signal, continuation = null }) {
   const seed = settings.seed || pickSeed();
   const variant = settings.variant ?? variantFor(settings.apocalypseId);
-  const prompt = buildWorldGenerationPrompt({ ...settings, survivor, seed, variant, continuation });
-  const system = 'You are a meticulous designer of survival-fiction worlds who outputs only valid JSON: no markdown fences, no commentary, no comments inside the JSON.';
-  let lastProblems = [];
-  let lastText = '';
-  let truncated = false;
+  const args = { ...settings, survivor, seed, variant, continuation };
+  const opts = { apiKey, model, baseUrl, json: true, maxTokens: 32000, temperature: 0.9, effort: 'medium', signal, system: SYSTEM };
+  const vopts = { startDay: settings.startDay, custom: survivor?.background === 'custom' };
+  const cap = typeof provider.outputCap === 'function' ? provider.outputCap(model) : Infinity;
+  const strategy = settings.generation && settings.generation !== 'auto' ? settings.generation : (provider.worldInParts || cap <= PARTS_BELOW_CAP) ? 'parts' : 'single';
+  const thinking = /reason|think|\bo[1-9]\b|gpt-5|\br1\b/i.test(String(model || provider.defaultModel || ''));
+  const note = thinking ? ' (a thinking model works in silence for a while before any text appears)' : '';
+  const finish = parsed => { parsed.seed = seed; parsed.variant = variant || null; return normalizeWorld(parsed, settings); };
+  if (strategy === 'single') {
+    const r = await generateSingle({ provider, opts, args, vopts, onProgress, maxAttempts, signal, note });
+    if (r.world) return finish(r.world);
+    if (!r.truncated) throw r.error;
+    onProgress?.('The whole world does not fit this model\'s output limit; building it in three parts instead...');
+  }
+  const r = await generateInParts({ provider, opts, args, vopts, onProgress, maxRounds: maxAttempts, signal, note });
+  if (r.world) return finish(r.world);
+  throw r.error;
+}
+
+/** One request, continued and stitched if the model's output limit cuts it off. */
+async function callWithContinuation({ provider, opts, messages, firstKey, onProgress, label }) {
+  let chars = 0;
+  let { text, finishReason } = await completeWithMeta(provider, { ...opts, messages }, (chunk, t) => { chars = t.length; onProgress?.(`${label}... ${chars} chars`); });
+  if (finishReason === 'refusal') throw new Error('The model declined to write this world. Try another apocalypse or model.');
+  for (let c = 0; c < MAX_CONTINUATIONS && (finishReason === 'length' || (finishReason == null && looksTruncated(text))); c++) {
+    onProgress?.(`${label}: the reply was cut off at ${chars} chars; asking the model to continue (${c + 1} of ${MAX_CONTINUATIONS})...`);
+    const tail = text.slice(-160).replace(/\s+/g, ' ');
+    const cont = await completeWithMeta(provider, {
+      ...opts, json: false,
+      messages: [...messages, { role: 'assistant', content: text }, { role: 'user', content: `Your output was cut off before the JSON ended. It currently ends with: ${tail}\nContinue EXACTLY from where it stopped, starting with the very next character after that. Output only the remaining JSON: do not repeat anything already written, do not restart the object, no fences, no commentary.` }]
+    }, (chunk, t) => { onProgress?.(`${label}: continuing... ${chars + t.length} chars`); });
+    // A model that restarts the whole document instead of continuing it is taken at its word.
+    const restart = new RegExp(`^\\s*(?:\`\`\`(?:json)?\\s*)?\\{\\s*"${firstKey}"\\s*:`);
+    text = restart.test(cont.text) ? cont.text : stitch(text, cont.text);
+    chars = text.length;
+    finishReason = cont.finishReason;
+  }
+  return { text, finishReason, truncated: finishReason === 'length' || looksTruncated(text) };
+}
+
+async function generateSingle({ provider, opts, args, vopts, onProgress, maxAttempts, signal, note }) {
+  const prompt = buildWorldGenerationPrompt(args);
+  let lastProblems = [], lastText = '', truncated = false, everTruncated = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    onProgress?.(`Building the world (attempt ${attempt} of ${maxAttempts})...`, 0);
+    const label = `Building the world (attempt ${attempt} of ${maxAttempts})${note}`;
+    onProgress?.(`${label}...`);
     const messages = [{ role: 'user', content: prompt }];
-    if (attempt > 1 && lastProblems.length) {
-      messages[0].content += `\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Fix every problem below and output the complete corrected JSON:\n- ${lastProblems.join('\n- ')}`;
-    }
-    let chars = 0;
+    if (attempt > 1 && lastProblems.length) messages[0].content += `\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Fix every problem below and output the complete corrected JSON:\n- ${lastProblems.join('\n- ')}`;
     try {
-      const opts = { apiKey, model, baseUrl, json: true, maxTokens: 32000, temperature: 0.9, effort: 'medium', signal, system };
-      let { text, finishReason } = await completeWithMeta(provider, { ...opts, messages }, (chunk, t) => { chars = t.length; onProgress?.(`Building the world (attempt ${attempt})... ${chars} chars`, chars); });
-      if (finishReason === 'refusal') throw new Error('The model declined to write this world. Try another apocalypse or model.');
-      // Continue a reply that stopped at the output limit.
-      for (let c = 0; c < MAX_CONTINUATIONS && (finishReason === 'length' || (finishReason == null && looksTruncated(text))); c++) {
-        onProgress?.(`The reply was cut off at ${chars} chars; asking the model to continue (${c + 1} of ${MAX_CONTINUATIONS})...`, chars);
-        const cont = await completeWithMeta(provider, {
-          ...opts, json: false,
-          messages: [...messages, { role: 'assistant', content: text }, { role: 'user', content: 'Your output was cut off before the JSON ended. Continue EXACTLY from where it stopped, starting with the very next character. Output only the remaining JSON: do not repeat anything already written, do not restart the object, no fences, no commentary.' }]
-        }, (chunk, t) => { onProgress?.(`Continuing the world... ${chars + t.length} chars`, chars + t.length); });
-        // A model that restarts the whole document instead of continuing it is taken at its word.
-        text = /^\s*\{\s*"title"\s*:/.test(cont.text) ? cont.text : stitch(text, cont.text);
-        chars = text.length;
-        finishReason = cont.finishReason;
-      }
-      lastText = text;
-      truncated = finishReason === 'length' || looksTruncated(text);
-      const parsed = deepClean(extractJSON(text));
-      lastProblems = validateWorld(parsed, { startDay: settings.startDay, custom: survivor?.background === 'custom' });
-      if (lastProblems.length === 0) { parsed.seed = seed; parsed.variant = variant || null; return normalizeWorld(parsed, settings); }
-      if (truncated) lastProblems.unshift('Your output was cut off at the output token limit: write a more compact world (shorter descriptions, no padding) so the whole JSON fits.');
-      onProgress?.(`Validation failed: ${lastProblems.slice(0, 3).join('; ')}`, chars);
+      const r = await callWithContinuation({ provider, opts, messages, firstKey: 'title', onProgress, label });
+      lastText = r.text; truncated = r.truncated; everTruncated = everTruncated || truncated;
+      const parsed = deepClean(extractJSON(r.text));
+      lastProblems = validateWorld(parsed, vopts);
+      if (lastProblems.length === 0) return { world: parsed };
+      if (truncated) break;   // a cut-off document cannot be fixed by asking for more of it
+      onProgress?.(`Validation failed: ${lastProblems.slice(0, 3).join('; ')}`);
     } catch (err) {
-      if (signal?.aborted) throw err;
-      if (/declined/.test(err.message)) throw err;
+      if (signal?.aborted || /declined/.test(err.message)) throw err;
+      if (truncated || looksTruncated(lastText)) { everTruncated = true; lastProblems = ['Your output was cut off at the output token limit and could not be parsed.']; break; }
       const tail = lastText ? ` The reply ended with: …${lastText.slice(-120).replace(/\s+/g, ' ')}` : '';
-      lastProblems = [truncated || looksTruncated(lastText)
-        ? 'Your output was cut off at the output token limit and could not be parsed: write a more compact world (shorter descriptions, no padding) so the whole JSON fits.'
-        : `Output was not parseable JSON (${err.message}).${tail} Output the whole object as valid JSON with no comments, fences or trailing text.`];
-      onProgress?.(`Attempt ${attempt} failed: ${err.message}`, chars);
+      lastProblems = [`Output was not parseable JSON (${err.message}).${tail} Output the whole object as valid JSON with no comments, fences or trailing text.`];
+      onProgress?.(`Attempt ${attempt} failed: ${err.message}`);
     }
   }
-  const hint = truncated || looksTruncated(lastText)
-    ? ' The model\'s output limit is too small for a world of this size: pick a model with a larger output limit, or a shorter game.'
-    : ' The model is not producing valid JSON; a stronger model (Claude Sonnet, GPT-4.1, Gemini 2.5 Flash, DeepSeek) usually fixes this.';
-  const error = new Error(`Could not build a valid world after ${maxAttempts} attempts. Last problems: ${lastProblems.join('; ')}${hint}`);
+  const error = new Error(`Could not build a valid world after ${maxAttempts} attempts. Last problems: ${lastProblems.join('; ')} A stronger model (Claude Sonnet, GPT-4.1, Gemini 2.5 Flash, DeepSeek) usually fixes this.`);
   error.raw = lastText;
-  throw error;
+  return { error, truncated: everTruncated };
+}
+
+/** The world in three parts, each validated for shape, the whole validated together, failing parts rewritten with the errors fed back. */
+async function generateInParts({ provider, opts, args, vopts, onProgress, maxRounds, signal, note }) {
+  const parts = {};
+  const pending = Object.fromEntries(WORLD_PARTS.map(p => [p.id, []]));
+  let lastProblems = [], lastText = '', truncated = false;
+  const written = exclude => { const o = {}; let any = false; for (const p of WORLD_PARTS) if (p.id !== exclude && parts[p.id]) { Object.assign(o, parts[p.id]); any = true; } return any ? o : null; };
+  for (let round = 1; round <= maxRounds; round++) {
+    for (const part of WORLD_PARTS) {
+      if (parts[part.id] && !pending[part.id].length) continue;
+      const n = WORLD_PARTS.indexOf(part) + 1;
+      const label = `Building the world: part ${n} of ${WORLD_PARTS.length}${round > 1 ? ` (round ${round})` : ''}${note}`;
+      onProgress?.(`${label}...`);
+      const messages = [{ role: 'user', content: buildWorldPartPrompt(args, { part, soFar: written(part.id), problems: pending[part.id] }) }];
+      let r;
+      try { r = await callWithContinuation({ provider, opts, messages, firstKey: part.keys[0], onProgress, label }); }
+      catch (err) { if (signal?.aborted || /declined/.test(err.message)) throw err; pending[part.id] = [`The request failed (${err.message}); write the part again.`]; lastProblems = pending[part.id]; continue; }
+      lastText = r.text; truncated = r.truncated;
+      let obj = null;
+      try { obj = deepClean(extractJSON(r.text)); } catch (err) { pending[part.id] = [r.truncated ? 'Your output was cut off at the output token limit and could not be parsed: write this part more compactly (shorter descriptions, no padding).' : `Output was not parseable JSON (${err.message}). Output the whole part as valid JSON.`]; }
+      if (!pending[part.id].length || parts[part.id] === undefined) {
+        if (obj && typeof obj === 'object') {
+          const problems = [...part.keys.filter(k => obj[k] === undefined).map(k => `missing top-level key "${k}"`), ...structuralProblems(part, obj)];
+          if (problems.length) pending[part.id] = problems;
+          else { const picked = {}; for (const k of part.keys) picked[k] = obj[k]; parts[part.id] = picked; pending[part.id] = []; continue; }
+        } else if (!pending[part.id].length) pending[part.id] = ['Output was not a JSON object.'];
+      }
+      lastProblems = pending[part.id];
+      onProgress?.(`Part ${n} needs another pass: ${pending[part.id][0]}`);
+    }
+    if (WORLD_PARTS.some(p => !parts[p.id])) continue;
+    const merged = Object.assign({}, ...WORLD_PARTS.map(p => parts[p.id]));
+    lastProblems = validateWorld(merged, vopts);
+    if (!lastProblems.length) return { world: merged };
+    for (const p of WORLD_PARTS) pending[p.id] = [];
+    for (const prob of lastProblems) pending[partFor(prob)].push(prob);
+    onProgress?.(`Validation failed: ${lastProblems.slice(0, 3).join('; ')}`);
+  }
+  const error = new Error(`Could not build a valid world after ${maxRounds} rounds. Last problems: ${lastProblems.join('; ')}${truncated ? ' Even one part of the world did not fit this model\'s output limit: pick a model with a larger output limit.' : ' A stronger model (Claude Sonnet, GPT-4.1, Gemini 2.5 Flash, DeepSeek) usually fixes this.'}`);
+  error.raw = lastText;
+  return { error };
+}
+
+/** Cheap shape checks for a part before the whole world is validated, so an obviously short part is rewritten at once. */
+function structuralProblems(part, obj) {
+  const out = [];
+  if (part.id === 'setting') {
+    const locs = asArray(obj.locations);
+    if (locs.length < 8 || locs.length > 12) out.push(`need 8-12 locations, got ${locs.length}`);
+    if (!locs.some(l => asArray(l?.hidden).some(h => h && h.clueId))) out.push('at least one location needs a hidden entry with clueId "c1" (the clue found by searching; the clue itself is written in part 3)');
+    if (!str(obj.prologue?.theMoment)) out.push('prologue.theMoment missing');
+  } else if (part.id === 'people') {
+    const f = asArray(obj.factions).length, n = asArray(obj.npcs).length;
+    if (f < 2 || f > 3) out.push(`need 2-3 factions, got ${f}`);
+    if (n < 6 || n > 8) out.push(`need 6-8 npcs, got ${n}`);
+  } else {
+    if (asArray(obj.timeline).length < 10) out.push(`timeline needs at least 10 entries, got ${asArray(obj.timeline).length}`);
+    if (!obj.ending?.trueWayOut) out.push('ending.trueWayOut missing');
+    if (asArray(obj.radio?.channels).length < 4) out.push(`radio.channels needs at least 4 entries, got ${asArray(obj.radio?.channels).length}`);
+  }
+  return out;
+}
+
+/** Which part a validation problem belongs to, so only that part is rewritten. */
+function partFor(problem) {
+  const p = String(problem).toLowerCase();
+  if (/heldby unknown faction/.test(p)) return 'setting';
+  if (/clue|ending|way ?out|window|requirement|timeline|radio|channel|false ?hope|contact|doom|inciting|frequency|hidden entry/.test(p)) return 'plot';
+  if (/npc|faction|betray|knowntosurvivor/.test(p)) return 'people';
+  return 'setting';
 }
 
 /** Join a cut-off reply and its continuation, dropping any overlap the model repeated. */
@@ -5342,7 +5511,7 @@ function applyExtension(state, parsed) {
   }
   return { added: entries.length, messages, newWayOut };
 }
-return { generateWorld, stitch, extendTimeline, applyExtension };
+return { generateWorld, partFor, stitch, extendTimeline, applyExtension };
 })();
 
 // ---- js/prompts/gmSystem.js ----
