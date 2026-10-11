@@ -17,6 +17,8 @@ import { standingLabel, holderOf } from './factions.js';
 import { claimShelter, abandonShelter, fortify, shelterSummary } from './shelter.js';
 import { tune, scan, knowFreq, freqLabel, scheduleText, logRadio, walkieReach } from './radio.js';
 import { buildBriefing, briefingText } from './briefing.js';
+import { estimateMinutes } from './intent.js';
+import { consumeByIntent } from './consume.js';
 import { rollTravel, scavengeBudget, applyDepletion, resolveEncounter, classifyApproach, encounterChoices, makeEncounter } from './encounters.js';
 import { getLocation, getNpc, getFaction, getClue, locState, effectiveDanger, isKnown } from './world.js';
 
@@ -125,8 +127,9 @@ function preResolve(state, action) {
       applyDepletion(state, state.location, b.categories);
       break;
     }
+    case 'consume': { pre.consume = consumeByIntent(state, action.intent || { eat: true, minutes: 25 }); pre.minutes = pre.consume.minutes; break; }
     case 'rest': {
-      const hours = clamp(num(action.hours, 6), 1, 12);
+      const hours = clamp(num(action.hours, 6), 0.5, 16);
       pre.hours = hours; pre.minutes = hours * 60; pre.tickCtx = { sleeping: true, camp: !!action.camp };
       if (!atShelter(state)) {
         const risk = (effectiveDanger(state, state.location) * 4 + state.threat.level * 4 + (isNight(state.clock.minutes) ? 10 : 0)) * d.encounter - skillCount(state, 'stealth') * 5 - (isGuarding(state) ? 10 : 0);
@@ -260,8 +263,16 @@ export function describeAction(state, action, pre, events, notices) {
       break;
     }
     case 'rest':
-      lines.push(`[ACTION: REST ${pre.hours}h at ${loc.name}${atShelter(state) ? ' (your shelter)' : ' (no shelter: rough camp)'} · now ${time}] Narrate the rest briefly: sounds, cold, dreams, who kept watch, how the body feels after.${state.encounter ? ` They are woken. ${encounterTail(state.encounter)}` : ''}`);
+      lines.push(`[ACTION: SLEEP / REST ${pre.hours}h at ${loc.name}${atShelter(state) ? ' (your shelter)' : ' (no shelter: rough camp)'} · the clock has already moved · it is now ${time}]${words ? ` Survivor: "${words}".` : ''} Narrate the whole span in one reply: lying down, what the night or the hours held, the waking, how the body feels now. The game has applied the rest and the time; do not change vitals for it. 80-180 words.${state.encounter ? ` They are woken. ${encounterTail(state.encounter)}` : ''}`);
       break;
+    case 'consume': {
+      const c = pre.consume;
+      lines.push(`[ACTION: EAT / DRINK · resolved by the game · ${c.minutes} min · now ${time}] Survivor: "${words}"`);
+      lines.push(c.ok
+        ? `RESULT: ${c.ate ? `ate ${c.ate}${c.cooked ? ' (cooked)' : ''}; ` : ''}${c.drank ? `drank ${c.drank}; ` : ''}hunger now ${Math.round(state.vitals.hunger)}, thirst ${Math.round(state.vitals.thirst)}. ${c.notices.join(' ')} Narrate the meal or the drink briefly (40-120 words), consistent with exactly this. The body and the stores are already updated: change no vitals and list no items.`
+        : `RESULT: NOTHING. ${c.notices.join(' ')} Narrate the empty cupboard, the dry tap or the search for something to eat briefly (40-100 words); no items appear and no vitals change.`);
+      break;
+    }
     case 'wait': lines.push(`[ACTION: WAIT ${pre.hours}h at ${loc.name} · now ${time}] A brief passage of time: what changes, what is heard. 60-120 words.`); break;
     case 'talk': {
       const npc = getNpc(state, action.npcId); const c = companion(state, action.npcId);
@@ -395,10 +406,21 @@ export async function runTurn({ state, action, provider, apiKey, model, baseUrl,
   }
   onNarrative?.(parsed.narrative);
 
-  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime };
+  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime, narrative: parsed.narrative || '' };
   const notices = applyChanges(state, parsed.changes || {}, ctx);
-  const resting = pre.allowGmTime && parsed.changes?.resting === true;
-  let extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, resting ? 720 : pre.prologueLife ? 480 : 240) : 0;
+  // Time for a free action: what the GM says it took, checked against the game's own estimate from
+  // the survivor's words and the narrative, so a night's sleep is never twenty minutes.
+  let resting = pre.allowGmTime && (parsed.changes?.resting === true || parsed.resting === true);
+  let extra = 0;
+  if (pre.allowGmTime) {
+    const said = [parsed.timeMinutes, parsed.changes?.timeMinutes].map(x => num(x, NaN)).find(Number.isFinite);
+    const est = estimateMinutes(state, action.text || '', parsed.narrative || '');
+    if (!Number.isFinite(said) || said <= 0) { extra = est.minutes; resting = resting || est.resting; }
+    else if (est.resting && est.minutes > said) { extra = est.minutes; resting = true; }
+    else if (est.source === 'narrative-clock' && est.minutes > said) extra = est.minutes;
+    else extra = said;
+    extra = clamp(Math.round(extra), 0, resting ? 960 : 600);
+  }
   if (ctx.travelMinutes) extra = Math.max(extra, ctx.travelMinutes);
   const noticesAfter = extra ? advanceTime(state, extra, resting ? { sleeping: true, camp: !atShelter(state) } : ctx.travelMinutes ? { exertion: true } : {}) : [];
 

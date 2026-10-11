@@ -4,7 +4,7 @@
 // Day numbers in the generated world count from the inciting event (day 0);
 // the engine shifts them so that the survivor's first day of play is day 0.
 
-import { apocalypseById, variantFor } from '../engine/apocalypses.js';
+import { apocalypseById, variantFor, clichesFor } from '../engine/apocalypses.js';
 import { BACKGROUNDS } from '../engine/inventory.js';
 
 export const WORLD_SCHEMA_TEXT = `{
@@ -65,10 +65,17 @@ const COUNTRIES = ['the United States', 'Canada', 'the United Kingdom', 'Ireland
 const TONES = ['slow dread: the world fails one small thing at a time', 'chaos: everything goes at once and nobody is in charge', 'bureaucratic: forms, checkpoints, announcements, a system that keeps working after it has stopped making sense', 'intimate: a few streets, a few people, everything else is rumour', 'procedural: the authorities respond competently for a while, and that is the trap', 'eerie: quiet, wrong, and beautiful in places'];
 const RESPONSES = ['competent at first, then overwhelmed', 'absent from the first hour', 'overzealous: curfews and cordons before anyone knows why', 'corrupt: the people in charge are already dealing', 'fragmented: three agencies, three sets of orders, no phones between them', 'honest and helpless'];
 const SEASONS = ['spring', 'summer', 'autumn', 'winter'];
+const CHANNELS = ['printed notices taped to doors and lamp-posts', 'loudspeaker vans and police on foot', 'neighbours, word of mouth, the landlord, the shopkeeper', 'the local radio station and nothing else', 'one television channel that keeps repeating itself', 'the employer: a memo, a shift supervisor, a locked gate', 'the church, the community hall, the school', 'nothing official at all, only rumour and what people see'];
+const GENERIC_CLICHES = ['an emergency alert, text or tone on a phone as the opening', 'a television bulletin as the opening', 'the survivor waking up to the catastrophe', 'a phone as the harbinger of anything', 'a wise old person who explains it all', 'a safe zone that is secretly a prison as the only twist', 'a scientist who caused it and is sorry'];
 
-export function pickSeed(rnd = Math.random) {
-  const pick = a => a[Math.floor(rnd() * a.length)];
-  return { opening: pick(OPENINGS), regionType: pick(REGION_TYPES), country: pick(COUNTRIES), tone: pick(TONES), response: pick(RESPONSES), season: pick(SEASONS) };
+/**
+ * The seed a world is built from. recent holds what the last few worlds used
+ * (openings, regionTypes, tones, channels, responses) so they are not drawn
+ * again while something else remains.
+ */
+export function pickSeed(rnd = Math.random, recent = {}) {
+  const pick = (a, used = []) => { const pool = a.filter(x => !used.includes(x)); const from = pool.length ? pool : a; return from[Math.floor(rnd() * from.length)]; };
+  return { opening: pick(OPENINGS, recent.openings), regionType: pick(REGION_TYPES, recent.regionTypes), country: pick(COUNTRIES), tone: pick(TONES, recent.tones), response: pick(RESPONSES, recent.responses), channel: pick(CHANNELS, recent.channels), season: pick(SEASONS) };
 }
 
 export const START_LABEL = { before: 'before it begins', onset: 'the day it begins', early: 'about a week in', deep: 'weeks in' };
@@ -125,15 +132,31 @@ function partNotes(part, soFar) {
   return `NOTES FOR THIS PART: ${slots.length ? `the locations hold hidden entries with these clue ids: ${slots.join('; ')}. ending.clues MUST contain a clue for each of those ids with source { "kind": "location", "id": that location } whose text matches what is hidden there.` : 'no location carries a clueId, so every clue has source kind "npc" or "radio".'} Add at least one clue with source kind "npc" (one of: ${npcs.join(', ') || 'the npcs of part 2'}) and one with kind "radio" (a frequency you define in radio.channels, carried by one of that channel's messages). Factions: ${facts.join('; ') || 'as written in part 2'}; include each faction radio frequency as a channel of kind "faction". trueWayOut.where and every falseHopes.where must be one of: ${locs.map(l => l.id).join(', ') || 'the location ids of part 1'}. deadlineDay is ${soFar?.deadlineDay ?? 'as fixed in part 1'}: the way-out window ends on or before it and the timeline runs up to it. Timeline effects use only existing location and faction ids.`;
 }
 
+/** True when a banned cliché is the very thing this world's variant is about (e.g. the compliance-score variant may use scores). */
+function overlaps(cliche, variant) {
+  const words = cliche.toLowerCase().match(/[a-z]{5,}/g) || [];
+  const v = variant.toLowerCase();
+  return words.filter(w => v.includes(w)).length >= 2 || /compliance|score/.test(cliche) && /compliance|scor/.test(v);
+}
+
 /** The design brief shared by the single-call prompt and the part prompts. */
 export function worldBrief({ apocalypseId, apocalypseName, customPremise, difficulty, lengthDays, openEnded, startDay = 0, homePlace, customBackground, survivor, seed, variant, continuation }) {
   const apo = apocalypseById(apocalypseId);
   const S = Math.round(Number(startDay) || 0);
   const L = Math.max(7, Math.min(730, Math.round(Number(lengthDays) || 30)));
   const sd = seed || pickSeed();
+  const banned = [...GENERIC_CLICHES, ...clichesFor(apocalypseId)].filter(c => !(variant && overlaps(c, variant)));
   const typeLine = apocalypseId === 'custom'
     ? `APOCALYPSE: the player's own premise. Use it exactly and build everything around it: """${customPremise || 'an unspecified catastrophe'}"""`
-    : `APOCALYPSE: ${apocalypseName || apo?.name}\nDESIGN NOTES FOR THIS TYPE: ${apo?.notes || ''}${variant ? `\nTHIS TIME IT IS SPECIFICALLY: ${variant}. Build the mechanics, the timeline and the truth around that version, not the generic one.` : ''}`;
+    : `APOCALYPSE: ${apocalypseName || apo?.name}\nDESIGN NOTES FOR THIS TYPE: ${apo?.notes || ''}`;
+  const versionBlock = `THIS WORLD'S VERSION (BINDING; every other part of the world follows from it):
+- ${variant ? `THE MECHANISM: this time it is specifically ${variant}. Build the cause, the threat, the timeline, the factions and the radio around that version and no other.` : 'THE MECHANISM: invent a specific, non-generic version of this catastrophe and state it in trueCause.'}
+- THE OPENING: the survivor first notices it ${sd.opening}. Write prologue.howTheyNotice from this and nothing else.
+- HOW OFFICIAL WORD TRAVELS: ${sd.channel}. The timeline, the situationReport and the radio reflect that; people learn things the way this place learns things.
+- TEXTURE: ${sd.tone}.
+- THE AUTHORITIES ARE: ${sd.response}.
+- BANNED, because every model reaches for them (allowed only where this world's version above names them): ${banned.join('; ')}.
+- Invent from the specifics of this place and these people. No scene, faction, false hope or ending that could be lifted from a film.`;
 
   const bg = BACKGROUNDS.find(b => b.id === survivor?.background);
   const survivorLine = survivor?.background === 'custom'
@@ -164,17 +187,12 @@ THIS IS CHAPTER ${continuation.chapter} OF A CONTINUING STORY. The same world, a
   return `You are designing the hidden ground truth for a grounded survival game. Produce ONE complete, internally consistent world as JSON matching the schema below exactly. This JSON is never shown to the player; it is the secret the Game Master plays from. Be specific and concrete everywhere: names, streets, objects, times. Vague entries make the game unplayable.
 
 ${typeLine}
+${versionBlock}
 ${survivorLine}
 ${homeLine}
 ${startLine}
 ${lengthLine}
 ${difficultyGuide}${contLine}
-
-VARIETY (follow these; they are what makes this world different from the last one):
-- OPENING: the survivor first notices it ${sd.opening}. Write prologue.howTheyNotice from this. Do not open with an emergency alert on a phone, a television bulletin or the survivor waking up unless the opening seed says so.
-- TEXTURE: ${sd.tone}.
-- THE AUTHORITIES ARE: ${sd.response}.
-- Avoid the stock version of this apocalypse. No scene, faction, false hope or ending that could be lifted from a film; invent from the specifics of this place and these people.
 
 DESIGN REQUIREMENTS
 1. publicBelief and trueCause must differ in a way that matters. The truth is discoverable from the clues; it is never told outright.

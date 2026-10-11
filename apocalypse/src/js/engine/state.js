@@ -5,7 +5,7 @@ import { clamp, asArray, str, num } from './util.js';
 import { START_MINUTES, MIN_PER_DAY, dayOf, weatherFor, formatDate } from './clock.js';
 import { tick, atShelter } from './survival.js';
 import { addInjury, setIllness, REGION_LABEL } from './body.js';
-import { addItem, removeItem, findItem, startingKit, backgroundSkills, backgroundTitle, hasRadio, hasWalkie, hasPhone, vehicleOf } from './inventory.js';
+import { addItem, removeItem, findItem, startingKit, backgroundSkills, backgroundTitle, hasRadio, hasWalkie, hasPhone, vehicleOf, foodEffect } from './inventory.js';
 import { meet, recruit, lose, adjustLoyalty, MOODS, withPlayer, dailyUpkeep, checkBetrayals, resolveAssignment, skillCount } from './companions.js';
 import { meetFaction, adjustStanding, factionState } from './factions.js';
 import { nightlyRaidRoll, burnFuel, claimShelter, abandonShelter } from './shelter.js';
@@ -156,6 +156,12 @@ export function advanceTime(state, minutes, ctx = {}) {
     if (dayOf(before) !== dayOf(state.clock.minutes)) onNewDay(state);
     if (state.vitals.health <= 0) break;
   }
+  // Exhaustion is not optional: at zero the body takes the sleep it needs, wherever it is.
+  if (!ctx.sleeping && !state.ended && state.vitals.fatigue <= 0 && state.vitals.health > 0) {
+    notices.push('Exhaustion takes you: you pass out where you are and sleep for four hours.');
+    state.passedOutAt = state.clock.minutes;
+    notices.push(...advanceTime(state, 240, { sleeping: true, camp: !atShelter(state), forced: true }));
+  }
   return notices;
 }
 
@@ -265,10 +271,16 @@ export function applyChanges(state, changes, ctx = {}) {
     notices.push(`Found: ${it.name}${num(spec.qty, 1) > 1 ? ` ×${Math.min(num(spec.qty, 1), isAmmo ? 60 : 6)}` : ''}`);
     state.stats.itemsFound++;
   }
+  const eating = /\b(?:eat|eats|ate|eating|drink|drinks|drank|drinking|meal|swallow|chew|sip|gulp|wolf|finish(?:es|ed)? (?:the|off|it))\b/i.test(String(ctx.narrative || ''));
   for (const n of asArray(changes.itemsLost).slice(0, 5)) {
     const name = typeof n === 'string' ? n : n?.name;
     const it = findItem(state.inventory.items, name);
-    if (it) { removeItem(state.inventory.items, it.id, typeof n === 'object' ? clamp(Math.round(num(n.qty, 1)), 1, it.qty) : 1); notices.push(`Lost: ${it.name}`); }
+    if (!it) continue;
+    removeItem(state.inventory.items, it.id, typeof n === 'object' ? clamp(Math.round(num(n.qty, 1)), 1, it.qty) : 1);
+    // A meal or a drink the narration consumed feeds the body, unless the GM already counted it.
+    if (eating && it.category === 'food' && !num(changes.vitals?.hunger, 0)) { v.hunger = clamp(v.hunger + foodEffect(it)); notices.push(`Ate: ${it.name}`); }
+    else if (eating && it.category === 'water' && !it.tags.includes('dirty') && !num(changes.vitals?.thirst, 0)) { v.thirst = clamp(v.thirst + 35); notices.push(`Drank: ${it.name}`); }
+    else notices.push(`Lost: ${it.name}`);
   }
   for (const inj of asArray(changes.injuries).slice(0, 2)) {
     if (!inj || typeof inj !== 'object') continue;

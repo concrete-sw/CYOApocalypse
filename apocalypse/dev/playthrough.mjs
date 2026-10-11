@@ -139,18 +139,23 @@ try {
   if (s.turnCount !== before + 1) throw new Error('a sentence starting with "open" should reach the GM as a free action');
   await cmd('/open map');
   if (!(await page.$('.win[data-win="map"]'))) throw new Error('a slash should force the open shortcut');
-  const hourBefore = Math.floor((s.clock.minutes % 1440) / 60);
-  const turnsBefore = s.turnCount;
-  let untilMorning = 7 - hourBefore; if (untilMorning <= 0) untilMorning += 24;
-  await cmd('sleep until morning');
+  const minsBefore = s.clock.minutes;
+  const hourBefore = Math.floor((minsBefore % 1440) / 60);
+  let untilNine = 9 - hourBefore; if (untilNine <= 0) untilNine += 24;
+  await cmd('Sleep till nine in the morning');
   s = await state();
-  if (untilMorning <= 12) {
-    if (Math.floor((s.clock.minutes % 1440) / 60) !== 7) throw new Error('"sleep until morning" should rest until 07:00');
-  } else if (s.turnCount !== turnsBefore + 1) throw new Error('"sleep until morning" in daytime should go to the GM as a free action');
+  if (untilNine <= 16) {
+    if (Math.floor((s.clock.minutes % 1440) / 60) !== 9) throw new Error(`"sleep till nine in the morning" should sleep until 09:00, clock is ${s.clock.minutes % 1440}`);
+  } else if (s.clock.minutes - minsBefore < 480) throw new Error('a sleep whose target is too far away should still be a full night');
+  if (s.vitals.fatigue < 40) throw new Error('sleeping should restore fatigue');
   await cmd('rest 2 hours');
   const after = await state();
   if (after.clock.minutes - s.clock.minutes < 120) throw new Error('"rest 2 hours" should advance the clock two hours');
   s = after;
+  const moraleBefore = s.vitals.morale;
+  await cmd('Make some coffee');
+  s = await state();
+  if (!(s.vitals.morale > moraleBefore)) throw new Error('coffee from a working tap should lift morale');
 
   step('radio appears with a radio; walkie-talkie calls');
   await cmd('tune 162.400');

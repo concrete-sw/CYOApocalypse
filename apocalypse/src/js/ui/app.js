@@ -7,12 +7,13 @@ import { runBoot } from './boot.js';
 import { registerPanels, DOCK_ORDER } from './panels/index.js';
 import { PROVIDERS, getProvider, complete } from '../providers/index.js';
 import { generateWorld, extendTimeline } from '../engine/worldGenerator.js';
-import { resolveStartDay } from '../prompts/worldGeneration.js';
+import { resolveStartDay, pickSeed } from '../prompts/worldGeneration.js';
+import { classifyIntent, sleepMinutes, minutesUntilHour } from '../engine/intent.js';
 import { runTurn } from '../engine/gm.js';
 import { runDebrief, finalizeDebrief, fallbackDebrief, computeStats } from '../engine/ending.js';
 import { newGameState, addLog, addFact, advanceTime, checkEnd, DOOM_LABEL, migrateState, reopenAfterDeadline, gearAvailable, unfiredCount } from '../engine/state.js';
-import { formatTime, phaseOf, daysLeft, dayOf, isNight, hourOf, MIN_PER_DAY, formatDate, collapseDay } from '../engine/clock.js';
-import { APOCALYPSES, apocalypseById, randomApocalypse } from '../engine/apocalypses.js';
+import { formatTime, phaseOf, daysLeft, dayOf, isNight, MIN_PER_DAY, formatDate, collapseDay } from '../engine/clock.js';
+import { APOCALYPSES, apocalypseById, randomApocalypse, variantFor } from '../engine/apocalypses.js';
 import { BACKGROUNDS, useItem, craft, removeItem, findItem, totalWeight, maxWeight, supplyDays, RECIPES, startingKit } from '../engine/inventory.js';
 import { deposit, withdraw, recoverCache } from '../engine/shelter.js';
 import { clearGuard, withPlayer, loyaltyLabel, TASKS } from '../engine/companions.js';
@@ -161,9 +162,11 @@ export class App {
       const start = $('#gameStart').value;
       const openEnded = len.value === 'open';
       const lengthDays = openEnded ? 90 : len.value === 'custom' ? Math.max(7, Math.min(730, Math.round(Number($('#customLength').value) || 30))) : Number(len.value);
+      const recent = store.loadRecent();
       const settings = {
         apocalypseId: apo.id, apocalypseName: apo.name, customPremise: apo.id === 'custom' ? premise : '', difficulty: $('#difficulty').value,
-        lengthDays, openEnded, start, startDay: resolveStartDay(start), homePlace: $('#homePlace').value.trim(), customBackground: bg.value === 'custom' ? customBackground : ''
+        lengthDays, openEnded, start, startDay: resolveStartDay(start), homePlace: $('#homePlace').value.trim(), customBackground: bg.value === 'custom' ? customBackground : '',
+        seed: pickSeed(Math.random, recent), variant: variantFor(apo.id, Math.random, recent.variants)
       };
       const survivor = { name: $('#survivorName').value.trim() || 'Survivor', background: bg.value, text: bg.value === 'custom' ? customBackground : '' };
       await this.startNewGame(settings, survivor);
@@ -200,6 +203,7 @@ export class App {
       const truth = await generateWorld({ ...this.apiOpts, settings, survivor: { ...survivor, skills }, continuation, signal: this.abort.signal, onProgress: msg => { st.textContent = msg; } });
       const s = newGameState({ survivor, truth, settings, carryOver });
       s.openingKind = (truth.startOffset || 0) > 0 ? 'opening' : 'prologue_start';
+      store.rememberWorld({ variant: truth.variant, seed: truth.seed });
       this.state = s; this.slot = 0; this.selected = { item: null, npc: null, location: null, region: null };
       addLog(s, 'system', `${carryOver ? `Chapter ${s.chapter}. ` : ''}Survivor ${s.survivor.name} (${s.survivor.id}) registered. Region: ${truth.region?.name || 'unknown'}. "${truth.title}".`);
       addLog(s, 'briefing', 'Dossier issued.');
@@ -425,6 +429,7 @@ export class App {
     switch (a.type) {
       case 'prologue_start': case 'arrival': case 'opening': return null;
       case 'call': return `Into the walkie-talkie: "${a.text}"`;
+      case 'consume': return a.text || 'Eats and drinks.';
       case 'travel': return `Sets out for ${getLocation(s, a.locationId)?.name}.`;
       case 'look': return 'Looks around.';
       case 'search': return `Searches ${a.area}.`;
@@ -476,8 +481,10 @@ export class App {
   }
   look() { return this.act({ type: 'look' }); }
   search(area) { return this.act({ type: 'search', area }); }
-  rest(hours = 6, camp = false) { return this.act({ type: 'rest', hours, camp }); }
-  wait(hours = 1) { return this.act({ type: 'wait', hours }); }
+  rest(hours = 6, camp = false, text = '') { return this.act({ type: 'rest', hours, camp, text }); }
+  wait(hours = 1, text = '') { return this.act({ type: 'wait', hours, text }); }
+  /** Eating and drinking in the survivor's own words: the game decides what was had and what it did; the GM narrates it. */
+  consume(intent, text) { return this.act({ type: 'consume', intent, text }); }
   talk(npcId, text, indirect = false) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim(), indirect }); }
   give(itemId, npcId) { return this.act({ type: 'give', itemId, npcId }); }
   tune(freq) { if (!gearAvailable(this.state).radio) { toast('You have no radio to tune.', 'warn'); return null; } return this.act({ type: 'tune', freq }); }
@@ -607,9 +614,13 @@ export class App {
     if ((m = low.match(/^(?:open|show)\s+(?:me\s+)?(?:the\s+)?(\w+)\s*(?:panel|window)?$/))) { const id = DOCK_ORDER.find(x => x !== '---' && x !== 'tile' && (x === m[1] || this.wm.defs.get(x)?.title.toLowerCase().startsWith(m[1]))); return id ? () => this.wm.show(id) : null; }
     if ((m = low.match(/^(?:go|travel|goto|walk|head|move|set out|make my way)\s+(?:to\s+|towards?\s+|for\s+|over to\s+)?(?:the\s+)?(.+)$/))) { const l = findLoc(m[1]); return l ? () => this.travel(l.id) : null; }
     if ((m = low.match(/^(?:i\s+)?(?:search|scavenge|loot|ransack|rummage(?:\s+(?:through|in|around))?|dig\s+through|pick\s+through|comb\s+through)\s+(?:the\s+)?(.+)$/))) { const area = m[1]; if (findNpc(area) || area.split(/\s+/).length > 5 || /,|\b(?:and|then|while|but|for|before|after)\b/.test(area)) return null; return () => this.search(area); }
-    if ((m = low.match(new RegExp(`^(?:rest|sleep|nap|lie\\s+down|bed\\s+down|turn\\s+in|get\\s+some\\s+sleep|get\\s+some\\s+rest)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : (/^nap/.test(low) ? 2 : 6); if (hours == null) return null; return () => this.rest(hours); }
-    if ((m = low.match(new RegExp(`^(?:wait|pass\\s+the\\s+time|kill\\s+time|hold\\s+here)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : 1; if (hours == null) return null; return () => this.wait(hours); }
-    if ((m = low.match(/^(?:eat|drink|use|take|consume|swallow|apply)\s+(?:the\s+|some\s+|a\s+|an\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.useItem(it.id) : null; }
+    // Sleeping, napping, waiting, eating and drinking in any wording: the game keeps the clock and the body.
+    const npcHit = s.npcsMet.some(id => { const n = getNpc(s, id); return n && low.includes(n.name.split(/\s+/)[0].toLowerCase()); });
+    const intent = classifyIntent(text, { npcMentioned: npcHit });
+    if (intent?.kind === 'sleep' || intent?.kind === 'nap') { const mins = sleepMinutes(s, { ...intent, nap: intent.kind === 'nap' }); return () => this.rest(Math.round(mins / 6) / 10, false, text); }
+    if (intent?.kind === 'wait') { const mins = intent.minutes || (intent.target != null ? minutesUntilHour(s, intent.target) : 60); return () => this.wait(Math.max(0.25, Math.min(16, Math.round(mins / 6) / 10)), text); }
+    if (intent?.kind === 'consume') return () => this.consume(intent, text);
+    if ((m = low.match(/^(?:use|take|swallow|apply)\s+(?:the\s+|some\s+|a\s+|an\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.useItem(it.id) : null; }
     if ((m = low.match(/^(?:drop|discard|ditch|throw\s+away|dump)\s+(?:the\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.dropItem(it.id) : null; }
     if ((m = low.match(/^(?:craft|make|build)\s+(?:a\s+|an\s+|some\s+)?(.+)$/))) { const r = RECIPES.find(x => x.id === m[1] || x.name.toLowerCase().startsWith(m[1]) || x.makes.name.toLowerCase().startsWith(m[1])); return r ? () => this.craft(r.id) : null; }
     if ((m = low.match(/^(?:give|hand|pass)\s+(?:the\s+|my\s+|some\s+|a\s+)?(.+?)\s+to\s+(.+)$/))) { const it = findItem(items, m[1]); const n = findNpc(m[2]); return it && n && s.companions[n.id]?.status === 'with' ? () => this.give(it.id, n.id) : null; }
@@ -622,18 +633,6 @@ export class App {
     if (/^(?:hint|give\s+me\s+a\s+hint|any\s+hints?|what\s+should\s+i\s+do(?:\s+next)?)\b/.test(low)) return () => this.hint(text);
     if ((m = low.match(/^(?:note|journal)\s+(.+)$/))) return () => { s.journal = (s.journal ? s.journal + '\n' : '') + text.replace(/^\S+\s+/, ''); this.autosave(); this.wm.refresh('journal'); toast('Note added.'); };
     return null;
-  }
-
-  /**
-   * Hours from now until a named time of day, at least one. Returns null when the
-   * target is more than twelve hours away ("sleep until morning" at 10:00): that is
-   * not a rest the clock can simply skip, so the line goes to the GM as a free action.
-   */
-  hoursUntil(word) {
-    const h = hourOf(this.state.clock.minutes);
-    const target = { morning: 7, dawn: 6, daylight: 7, sunrise: 6, 'first light': 6, noon: 12, midday: 12, evening: 18, dusk: 19, sunset: 19, dark: 21, night: 21, nightfall: 21 }[word] ?? 7;
-    let d = target - h; if (d <= 0) d += 24;
-    return d > 12 ? null : Math.max(1, d);
   }
 
   // ---------------------------------------------------------------- ending
@@ -669,6 +668,8 @@ export class App {
       h('h2', {}, 'The verdict'), h('p', { class: 'narr' }, d.verdict || ''),
       h('h2', {}, 'What was really going on'), h('p', { class: 'narr' }, d.whatReallyHappened || ''),
       h('dl', { class: 'kv' },
+        d.variant ? [h('dt', {}, 'This world\'s version'), h('dd', {}, d.variant)] : null,
+        d.opening ? [h('dt', {}, 'How it reached you'), h('dd', {}, d.opening)] : null,
         h('dt', {}, 'What people believed'), h('dd', {}, d.publicBelief || ''),
         h('dt', {}, 'The truth'), h('dd', {}, d.trueCause || ''),
         h('dt', {}, 'The way out'), h('dd', {}, wo ? `${wo.what} · at ${getLocation(s, wo.where)?.name || wo.where} · days ${wo.windowStartDay} to ${wo.windowEndDay} · needed: ${(wo.requirements || []).map(r => r.description).join('; ') || 'nothing special'}` : ''),
@@ -742,7 +743,7 @@ export class App {
     const ok = await modal(h('div', {}, h('p', { class: 'narr' }, wo.howItPlaysOut || 'You got out.'), h('p', { class: 'narr' }, `The story continues somewhere new, in the same world, with what you carry${mates.length ? ` and ${mates.map(m => m.name).join(', ')}` : ''}. A new region is built around your arrival; the collapse is the same one, a little older.`)), { title: `Chapter ${(old.chapter || 1) + 1}`, buttons: [{ label: 'Go on', value: true, primary: true }, { label: 'Not now', value: false }] });
     if (!ok) return;
     const chapter = (old.chapter || 1) + 1;
-    const settings = { ...old.settings, start: 'deep', startDay: Math.max(1, collapseDay(old) + 2), lengthDays: old.settings.lengthDays || 30, homePlace: '', seed: null };
+    const settings = { ...old.settings, start: 'deep', startDay: Math.max(1, collapseDay(old) + 2), lengthDays: old.settings.lengthDays || 30, homePlace: '', seed: pickSeed(Math.random, store.loadRecent()), variant: old.truth.variant || null };
     const continuation = { chapter, previousTitle: old.truth.title, howItEnded: `${wo.description || ''} ${wo.howItPlaysOut || ''}`.trim(), trueCause: old.truth.apocalypse?.trueCause || '', companions: mates };
     const carryOver = {
       chapter, items: old.inventory.items,

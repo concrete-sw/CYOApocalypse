@@ -19,6 +19,16 @@ export const loadApiConfig = () => read(KEY_API, { providerId: 'anthropic', apiK
 export const saveApiConfig = c => write(KEY_API, c);
 export const forgetApiKey = () => { const c = loadApiConfig(); c.apiKey = ''; c.remember = false; write(KEY_API, c); };
 
+// What recent worlds were made of, so the next one is drawn from what has not been played lately.
+const KEY_RECENT = 'cyoa.recent';
+export const loadRecent = () => read(KEY_RECENT, { variants: [], openings: [], regionTypes: [], tones: [], channels: [], responses: [] });
+export function rememberWorld({ variant, seed } = {}) {
+  const r = loadRecent();
+  const push = (k, v) => { if (!v) return; r[k] = [v, ...(r[k] || []).filter(x => x !== v)].slice(0, 6); };
+  push('variants', variant); push('openings', seed?.opening); push('regionTypes', seed?.regionType); push('tones', seed?.tone); push('channels', seed?.channel); push('responses', seed?.response);
+  return write(KEY_RECENT, r);
+}
+
 // Slot 0 is the autosave slot; slots 1..SLOT_COUNT are manual.
 export function listSlots() {
   const out = [];

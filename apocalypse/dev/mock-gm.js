@@ -146,7 +146,8 @@ function reply(text, msgs, req) {
     if (/carrier or dead air/.test(text)) return J('[a carrier hum, no voice; something keys up here at other hours]', { speaker: 'radio' });
     return J('[static. nothing. the sea in a shell]', { speaker: 'radio' });
   }
-  if (/\[ACTION: REST/.test(text)) return J(`${events}You sleep badly and wake stiff. Rain again.${encounterTail}`, encounterBegins ? {} : { choices: ['Eat something', 'Check the radio', 'Get moving'] });
+  if (/\[ACTION: EAT \/ DRINK/.test(text)) return J(/RESULT: NOTHING/.test(text) ? 'The cupboard is a cupboard: nothing in it but the smell of where food used to be.' : 'You eat standing at the counter, not tasting much of it, and feel better for it anyway.', { choices: ['Check the window', 'Get some sleep'] });
+  if (/\[ACTION: (SLEEP \/ )?REST/.test(text)) return J(`${events}You sleep badly and wake stiff. Rain again.${encounterTail}`, encounterBegins ? {} : { choices: ['Eat something', 'Check the radio', 'Get moving'] });
   if (/\[ACTION: WAIT/.test(text)) return J(`${events}Time passes. The light changes. Nothing comes.`, { choices: ['Keep waiting', 'Move'] });
   if (/\[ACTION: SKIP AHEAD/.test(text)) return J(`${events}The hours go by in small tasks: water, watch, the radio hiss. The body keeps its own count.`, { choices: ['Eat', 'Check the map', 'Listen to the radio'] });
   if (/\[ACTION: CLAIM SHELTER/.test(text)) return J(/NOT POSSIBLE/.test(text) ? 'No. Not here.' : 'You drag the shelves across the broken window and wedge the back door. It is not much. It is yours.', { choices: ['Fortify it', 'Sort the stores', 'Rest'] });

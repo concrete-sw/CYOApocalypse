@@ -265,7 +265,7 @@ const sb = newGameState({ survivor: { name: 'B', background: 'teacher' }, truth:
 assert.equal(sb.phase, 'prologue'); assert.equal(collapseDay(sb), -3); assert.equal(sb.events.fired.length, 0);
 txt = describeAction(sb, { type: 'prologue_start' }, { minutes: 0 }, [], []); assert.match(txt, /ORDINARY LIFE/);
 sb.prologueTurns = 1;
-txt = describeAction(sb, { type: 'rest', hours: 8 }, { minutes: 480, hours: 8, prologueLife: true, allowGmTime: true }, [], []); assert.match(txt, /ORDINARY LIFE CONTINUES/); assert.match(txt, /ACTION: REST/);
+txt = describeAction(sb, { type: 'rest', hours: 8 }, { minutes: 480, hours: 8, prologueLife: true, allowGmTime: true }, [], []); assert.match(txt, /ORDINARY LIFE CONTINUES/); assert.match(txt, /ACTION: SLEEP \/ REST/);
 txt = describeAction(sb, { type: 'free', text: 'Walk to work' }, { minutes: 15, prologueLife: true }, [{ kind: 'world', index: before.incitingIndex, text: before.timeline[before.incitingIndex].event, visible: true, inciting: true }], []);
 assert.match(txt, /THE MOMENT/); assert.match(txt, /it happened at 10:00/);
 const deep = normalizeWorld(JSON.parse(JSON.stringify(raw)), { startDay: 21 });
@@ -316,6 +316,61 @@ for (const a of [{ type: 'look' }, { type: 'wait', hours: 2 }, { type: 'hint', t
 // Death path
 s2.vitals.health = 0; assert.equal(checkEnd(s2).kind, 'death');
 console.log('✓ snapshot, action descriptions, death');
+
+// Intent: sleeping, waiting, meals and time belong to the code
+const { classifyIntent, parseClockTarget, parseDuration, sleepMinutes, estimateMinutes, clockFromNarrative } = await eng('intent.js');
+const { consumeByIntent } = await eng('consume.js');
+assert.equal(classifyIntent('sleep till nine in the morning').kind, 'sleep'); assert.equal(classifyIntent('sleep till nine in the morning').target, 9);
+assert.equal(classifyIntent('Go to sleep').kind, 'sleep'); assert.equal(classifyIntent('nap for an hour').kind, 'nap'); assert.equal(classifyIntent('nap for an hour').minutes, 60);
+assert.equal(classifyIntent('wait until dark').kind, 'wait'); assert.equal(classifyIntent('wait until dark').target, 21);
+assert.equal(classifyIntent("I can't sleep, check the window"), null);
+assert.equal(classifyIntent('tell Alma to get some sleep', { npcMentioned: true }), null);
+assert.equal(classifyIntent('Open the door and wave at the coordinator'), null);
+assert.equal(classifyIntent('Make some eggs and coffee').kind, 'consume'); assert.ok(classifyIntent('Make some eggs and coffee').cook);
+assert.equal(classifyIntent('eat the leftovers').item, 'leftovers'); assert.ok(classifyIntent('Make some coffee').drink);
+assert.equal(parseDuration('sleep till nine in the morning'), null, '"in the morning" is a time, not a duration'); assert.equal(parseDuration('spend the afternoon on the roof'), 240);
+assert.equal(parseClockTarget('sleep until 6:30'), 6); assert.equal(parseClockTarget('wait till five'), 17); assert.equal(parseDuration('rest for a couple of hours'), 120);
+assert.equal(clockFromNarrative('You sleep through all of it. It is nine in the morning and you have slept.'), 540); assert.equal(clockFromNarrative('By 7:10 the street is awake.'), 430);
+const sx = newGameState({ survivor: { name: 'T', background: 'nurse' }, truth, settings: { difficulty: 'hardened', startDay: 0 }, rnd: seededRandom(9) }); sx.phase = 'play';
+sx.clock.minutes = 3 * 60 + 21;
+assert.equal(sleepMinutes(sx, { target: 9 }), 339, 'till nine from 03:21');
+assert.equal(sleepMinutes(sx, {}), 240, 'at night a plain "sleep" runs to seven, at least four hours');
+sx.clock.minutes = 10 * 60;
+assert.equal(sleepMinutes(sx, { target: 7 }), 480, 'morning is too far away by day: a full sleep instead');
+let est = estimateMinutes(sx, 'Go to sleep', ''); assert.equal(est.resting, true); assert.equal(est.minutes, 480);
+est = estimateMinutes(sx, 'Boot the phone and see what came in', 'You thumb it on.'); assert.equal(est.minutes, 10);
+est = estimateMinutes(sx, 'Head down to the basement cage', ''); assert.equal(est.minutes, 40);
+sx.clock.minutes = 6 * 60;
+est = estimateMinutes(sx, 'Finish the coffee', 'By 7:10 the street is awake.'); assert.equal(est.source, 'narrative-clock'); assert.equal(est.minutes, 70);
+// eating from the stores at home, drinking from the tap
+sx.vitals.hunger = 40; sx.vitals.thirst = 50;
+let cr = consumeByIntent(sx, { eat: true, drink: true, cook: true, minutes: 40 });
+assert.ok(cr.ok && cr.ate && cr.drank === 'water from the tap' && cr.cooked, JSON.stringify(cr));
+assert.ok(sx.vitals.hunger > 60 && sx.vitals.thirst > 80, 'the meal counted');
+sx.shelter.stash = sx.shelter.stash.filter(i => i.category !== 'food'); sx.inventory.items = sx.inventory.items.filter(i => i.category !== 'food');
+cr = consumeByIntent(sx, { eat: true, minutes: 25 }); assert.ok(!cr.ok && cr.missing.includes('food'));
+// exhaustion knocks you out
+sx.vitals.fatigue = 2; sx.vitals.thirst = 90; sx.vitals.hunger = 90;
+const kn = advanceTime(sx, 120, { exertion: true });
+assert.ok(kn.some(x => /pass out/.test(x)), 'passing out is reported'); assert.ok(sx.vitals.fatigue > 20, 'and the body slept');
+// a meal the GM narrated feeds the body
+addItem(sx.inventory.items, { name: 'Tin of peaches', category: 'food' }); sx.vitals.hunger = 30;
+applyChanges(sx, { itemsLost: ['Tin of peaches'] }, { narrative: 'You eat the peaches with your fingers.' });
+assert.ok(sx.vitals.hunger > 40, 'itemsLost of food in a meal raises hunger');
+txt = describeAction(sx, { type: 'consume', text: 'eat something', intent: { eat: true } }, { minutes: 25, consume: { ok: true, ate: 'Crackers', drank: null, cooked: false, minutes: 25, notices: ['You eat crackers from the pack.'], missing: [] } }, [], []);
+assert.match(txt, /EAT \/ DRINK/); assert.match(txt, /ate Crackers/);
+console.log('✓ intent: sleep, wait, meals and time are the code\'s');
+
+// Variety: recent seeds and variants are avoided; clichés are banned unless the variant is that
+const { variantFor, clichesFor } = await eng('apocalypses.js');
+const v1 = variantFor('ai', seededRandom(1)); assert.ok(v1); assert.notEqual(variantFor('ai', seededRandom(1), [v1]), v1);
+const sd1 = pickSeed(seededRandom(2)); const sd2 = pickSeed(seededRandom(2), { openings: [sd1.opening] }); assert.notEqual(sd1.opening, sd2.opening); assert.ok(sd1.channel);
+assert.ok(clichesFor('ai').some(c => /compliance/.test(c)));
+const gen2 = buildWorldGenerationPrompt({ apocalypseId: 'ai', difficulty: 'hardened', lengthDays: 30, startDay: 0, survivor: { name: 'K', background: 'nurse' }, seed: sd1, variant: 'a logistics system that quietly stops delivering to districts it rates unproductive; no drones, no voice, just empty shelves and trucks that never turn in' });
+assert.match(gen2, /BANNED/); assert.match(gen2, /compliance, social-credit or citizen scores/); assert.match(gen2, /HOW OFFICIAL WORD TRAVELS/);
+const gen3 = buildWorldGenerationPrompt({ apocalypseId: 'ai', difficulty: 'hardened', lengthDays: 30, startDay: 0, survivor: { name: 'K', background: 'nurse' }, seed: sd1, variant: 'a compliance scoring system that becomes law overnight: doors, food and medicine answer to a number, and the number is watching' });
+assert.ok(!/BANNED[^\n]*compliance, social-credit/.test(gen3), 'the compliance variant may use scores');
+console.log('✓ variety: recent seeds and variants avoided; clichés banned');
 
 // Weather determinism
 assert.deepEqual(weatherFor(state, 5), weatherFor(state, 5));

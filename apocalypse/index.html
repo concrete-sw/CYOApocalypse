@@ -2578,7 +2578,7 @@ const { clamp, asArray, str, num } = __m["js/engine/util.js"];
 const { START_MINUTES, MIN_PER_DAY, dayOf, weatherFor, formatDate } = __m["js/engine/clock.js"];
 const { tick, atShelter } = __m["js/engine/survival.js"];
 const { addInjury, setIllness, REGION_LABEL } = __m["js/engine/body.js"];
-const { addItem, removeItem, findItem, startingKit, backgroundSkills, backgroundTitle, hasRadio, hasWalkie, hasPhone, vehicleOf } = __m["js/engine/inventory.js"];
+const { addItem, removeItem, findItem, startingKit, backgroundSkills, backgroundTitle, hasRadio, hasWalkie, hasPhone, vehicleOf, foodEffect } = __m["js/engine/inventory.js"];
 const { meet, recruit, lose, adjustLoyalty, MOODS, withPlayer, dailyUpkeep, checkBetrayals, resolveAssignment, skillCount } = __m["js/engine/companions.js"];
 const { meetFaction, adjustStanding, factionState } = __m["js/engine/factions.js"];
 const { nightlyRaidRoll, burnFuel, claimShelter, abandonShelter } = __m["js/engine/shelter.js"];
@@ -2741,6 +2741,12 @@ function advanceTime(state, minutes, ctx = {}) {
     if (dayOf(before) !== dayOf(state.clock.minutes)) onNewDay(state);
     if (state.vitals.health <= 0) break;
   }
+  // Exhaustion is not optional: at zero the body takes the sleep it needs, wherever it is.
+  if (!ctx.sleeping && !state.ended && state.vitals.fatigue <= 0 && state.vitals.health > 0) {
+    notices.push('Exhaustion takes you: you pass out where you are and sleep for four hours.');
+    state.passedOutAt = state.clock.minutes;
+    notices.push(...advanceTime(state, 240, { sleeping: true, camp: !atShelter(state), forced: true }));
+  }
   return notices;
 }
 
@@ -2850,10 +2856,16 @@ function applyChanges(state, changes, ctx = {}) {
     notices.push(`Found: ${it.name}${num(spec.qty, 1) > 1 ? ` ×${Math.min(num(spec.qty, 1), isAmmo ? 60 : 6)}` : ''}`);
     state.stats.itemsFound++;
   }
+  const eating = /\b(?:eat|eats|ate|eating|drink|drinks|drank|drinking|meal|swallow|chew|sip|gulp|wolf|finish(?:es|ed)? (?:the|off|it))\b/i.test(String(ctx.narrative || ''));
   for (const n of asArray(changes.itemsLost).slice(0, 5)) {
     const name = typeof n === 'string' ? n : n?.name;
     const it = findItem(state.inventory.items, name);
-    if (it) { removeItem(state.inventory.items, it.id, typeof n === 'object' ? clamp(Math.round(num(n.qty, 1)), 1, it.qty) : 1); notices.push(`Lost: ${it.name}`); }
+    if (!it) continue;
+    removeItem(state.inventory.items, it.id, typeof n === 'object' ? clamp(Math.round(num(n.qty, 1)), 1, it.qty) : 1);
+    // A meal or a drink the narration consumed feeds the body, unless the GM already counted it.
+    if (eating && it.category === 'food' && !num(changes.vitals?.hunger, 0)) { v.hunger = clamp(v.hunger + foodEffect(it)); notices.push(`Ate: ${it.name}`); }
+    else if (eating && it.category === 'water' && !it.tags.includes('dirty') && !num(changes.vitals?.thirst, 0)) { v.thirst = clamp(v.thirst + 35); notices.push(`Drank: ${it.name}`); }
+    else notices.push(`Lost: ${it.name}`);
   }
   for (const inj of asArray(changes.injuries).slice(0, 2)) {
     if (!inj || typeof inj !== 'object') continue;
@@ -3005,6 +3017,156 @@ function ratingFor(score, kind) {
 return { SKILLS, DOOM_LABEL, UTILITY_KEYS, newGameState, migrateState, timelineMinute, unfiredCount, gearAvailable, addLog, addFact, addFlag, hasFlag, queueEvent, takeEvents, foundClue, advanceTime, applyTimelineEntry, applyChanges, endingAvailable, endingStatus, checkEnd, reopenAfterDeadline, retire, computeScore, ratingFor };
 })();
 
+// ---- js/engine/intent.js ----
+__m["js/engine/intent.js"] = (() => {
+const { phaseOf } = __m["js/engine/clock.js"];
+// What a typed sentence means for the clock and the body. The code, not the
+// Game Master, decides how long sleeping, waiting, eating and drinking take,
+// and estimates the time any other action took when the GM forgets to say.
+
+
+const NUM_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+const num = q => (/^\d/.test(q) ? parseFloat(q) : NUM_WORDS[q] ?? null);
+
+/** "for 3 hours", "an hour", "a couple of hours", "forty minutes", "all day": minutes, or null. */
+function parseDuration(text) {
+  const t = String(text || '').toLowerCase();
+  let m = t.match(/\b(\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half an|a couple of|couple of|a few|few|several)\s*(?:more\s+|good\s+|solid\s+|full\s+)?(hours?|hrs?|h|minutes?|mins?)\b/);
+  if (m) {
+    const q = m[1];
+    const n = /^\d/.test(q) ? parseFloat(q) : q === 'a' || q === 'an' || q === 'one' ? 1 : q === 'half an' ? 0.5 : /couple/.test(q) ? 2 : /few/.test(q) ? 3 : /several/.test(q) ? 4 : NUM_WORDS[q] ?? 1;
+    return /^h/.test(m[2]) ? Math.round(n * 60) : Math.round(n);
+  }
+  if (/\ball (?:day|day long)\b/.test(t)) return 600;
+  if (/\b(?:all|the whole|the rest of the|spend the|for the|through the)\s+(?:morning|afternoon|evening)\b/.test(t)) return 240;
+  if (/\bhalf an hour\b|\bthirty minutes\b/.test(t)) return 30;
+  return null;
+}
+
+/** A clock hour named in the text: "nine", "9am", "21:00", "nine in the morning", "noon", "dawn", "morning", "dark". Null when none. */
+function parseClockTarget(text) {
+  const t = String(text || '').toLowerCase();
+  let m = t.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (m) return Number(m[1]);
+  m = t.match(/\b(1[0-2]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:o'?clock)?\s*(a\.?m\.?|p\.?m\.?|in the (?:morning|afternoon|evening)|at night|tonight)\b/);
+  if (m) {
+    let h = num(m[1]); const q = m[2];
+    if (/p|afternoon|evening|night|tonight/.test(q) && h < 12) h += 12;
+    if (/a\.?m/.test(q) && h === 12) h = 0;
+    return h;
+  }
+  m = t.match(/\b(?:until|till|til|to|at|around|by|past)\s+(1[0-2]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b(?!\s*(?:hours?|hrs?|minutes?|mins?|days?|km|miles?|of them|more))/);
+  if (m) { const h = num(m[1]); return h <= 5 ? h + 12 : h; }   // "till five" means the afternoon; "till nine" the morning
+  for (const [re, h] of [[/\b(?:first light|daybreak|sunrise|dawn)\b/, 6], [/\bmorning\b/, 7], [/\b(?:noon|midday|lunchtime)\b/, 12], [/\bafternoon\b/, 14], [/\b(?:evening|dusk|sunset|sundown)\b/, 19], [/\b(?:dark|night ?fall|night)\b/, 21], [/\bmidnight\b/, 0]]) if (re.test(t)) return h;
+  return null;
+}
+
+/** Minutes from now until the next occurrence of an hour, clamped. */
+function minutesUntilHour(state, hour, { min = 30, max = 16 * 60 } = {}) {
+  const now = state.clock.minutes;
+  let d = hour * 60 - (now % 1440);
+  if (d <= 0) d += 1440;
+  return Math.max(min, Math.min(max, d));
+}
+
+/** How long a night's sleep lasts from now: to the stated hour, or to seven if it is late, or a full eight hours by day. */
+function sleepMinutes(state, { minutes = null, target = null, nap = false } = {}) {
+  if (nap) return minutes ? Math.min(minutes, 180) : 90;
+  if (minutes) return Math.min(minutes, 16 * 60);
+  if (target != null) { const d = minutesUntilHour(state, target, { min: 30, max: 24 * 60 }); return d > 16 * 60 ? 8 * 60 : d; }
+  const ph = phaseOf(state.clock.minutes);
+  if (ph === 'night' || ph === 'dusk') return minutesUntilHour(state, 7, { min: 4 * 60, max: 12 * 60 });
+  return 8 * 60;
+}
+
+const NEGATED = /\b(?:can'?t|cannot|couldn'?t|don'?t|do not|won'?t|will not|not|no|never|without|instead of|rather than|skip|refuse to|too \w+ to)\s+(?:\w+\s+){0,2}?(?:sleep|sleeping|rest|resting|nap|eat|eating|drink|wait|bed)\b/;
+const TALKY = /^(?:tell|ask|say|offer|give|hand|call|text|message|radio|shout|yell|whisper|promise|warn|invite)\b/;
+
+/**
+ * Classify a typed action the code should resolve itself:
+ *   { kind: 'sleep' | 'nap' | 'wait', minutes, target }  or
+ *   { kind: 'consume', eat, drink, cook, item, minutes }  or null (anything else goes to the GM).
+ * npcMentioned: the sentence names someone the survivor knows, so it is probably about them, not a meal or a nap.
+ */
+function classifyIntent(text, { npcMentioned = false } = {}) {
+  const t = String(text || '').toLowerCase().replace(/[.!?]+$/, '').trim();
+  if (!t || NEGATED.test(t)) return null;
+  const words = t.split(/\s+/).length;
+  const minutes = parseDuration(t);
+  const target = parseClockTarget(t);
+  const talky = TALKY.test(t) || npcMentioned;
+  const nap = /\b(?:nap|doze|close my eyes|shut my eyes|rest my eyes|catnap|forty winks|power nap)\b/.test(t);
+  const sleep = /\b(?:go (?:to )?(?:sleep|bed)|back to (?:sleep|bed)|get some (?:sleep|rest|shut-?eye|shuteye|kip)|sleep|slept|turn in|crash(?: out)?|lie down|lay down|bed down|hit the (?:sack|hay)|pass out|doze off|call it a night|rest)\b/.test(t) && !/\b(?:rest of|the rest|arrest|restaurant|interest|restroom|rest ?stop|lay down the|put down)\b/.test(t);
+  const wait = /\b(?:wait|pass the time|kill time|hang around|stay put|sit tight|hold (?:here|position|up|out)|stay (?:here|in|home|inside|where i am)|keep watch|stand watch)\b/.test(t);
+  if (nap && !talky) return { kind: 'nap', minutes, target };
+  if (sleep && !talky && (words <= 14 || minutes != null || target != null)) return { kind: 'sleep', minutes, target };
+  if (wait && !talky && (words <= 12 || minutes != null || target != null)) return { kind: 'wait', minutes, target };
+  if (talky) return null;
+  const cook = /\b(?:cook|fry|boil|scramble|heat up|warm up|reheat|make (?:some |a |myself |us )?(?:breakfast|lunch|dinner|supper|tea|food|a meal|something to eat|something hot|eggs|pasta|rice|soup|noodles|toast|a sandwich|sandwiches|oatmeal|porridge|coffee)|fix (?:some |a |myself )?(?:breakfast|lunch|dinner|supper|food|a meal|a plate)|put the kettle on|brew)\b/.test(t);
+  const eat = cook && !/\b(?:coffee|tea|kettle|brew)\b/.test(t) || /\b(?:eat|ate|eating|breakfast|lunch|dinner|supper|snack|a bite|something to eat|feed myself|grab (?:some )?food|have (?:some )?food|finish (?:the|my) (?:leftovers|soup|meal|plate))\b/.test(t);
+  const drink = /\b(?:drink|drank|coffee|tea|cocoa|a glass of|a cup of|hydrate|rehydrate|sip|gulp|chug|down a|water from the tap|fill (?:a|the|my) (?:glass|cup|bottle)|put the kettle on|brew)\b/.test(t) && !/\b(?:drink(?:ing)? (?:in|it in) the view)\b/.test(t);
+  if (eat || drink) return { kind: 'consume', eat: !!eat, drink: !!drink, cook: !!cook, item: namedThing(t), minutes: cook ? 40 : eat ? 25 : 5 };
+  return null;
+}
+
+function namedThing(t) {
+  const m = t.match(/\b(?:eat|have|drink|make|cook|fry|boil|heat up|warm up|reheat|finish|open|grab)\s+(?:some |the |a |an |my |one of the |a can of |a tin of |a couple of |two |three )?([a-z][a-z' -]{2,30}?)(?:\s+(?:and|then|while|before|after|from|out of|in|on|with|for|at)\b|$)/);
+  if (!m) return null;
+  const n = m[1].trim();
+  return /^(?:something|anything|food|a meal|breakfast|lunch|dinner|supper|a bite|a snack|myself|up)$/.test(n) ? null : n;
+}
+
+const CLOCK_LEAD = /\b(?:it is|it's|its|by|at|nearly|almost|around|about|just after|just before|past|gone|until|till|comes up at|wake(?:s)? (?:you )?at|wake(?:s)? (?:you )?up at)\s+/;
+/** The minute of the day a narrative says it now is ("It is nine in the morning", "by 7:10"), or null. The last stated time wins. */
+function clockFromNarrative(narrative) {
+  const t = String(narrative || '').toLowerCase();
+  const re = new RegExp(`${CLOCK_LEAD.source}((?:[01]?\\d|2[0-3]):[0-5]\\d|(?:1[0-2]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\\s*(?:o'?clock|a\\.?m\\.?|p\\.?m\\.?|in the (?:morning|afternoon|evening)|at night))|noon|midday|midnight|dawn|first light|dusk)`, 'g');
+  let best = null, m;
+  while ((m = re.exec(t))) {
+    const hm = m[1].match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (hm) { best = Number(hm[1]) * 60 + Number(hm[2]); continue; }
+    const h = parseClockTarget(m[1]); if (h != null) best = h * 60;
+  }
+  return best;
+}
+
+const KEYWORD_MINUTES = [
+  [/\b(?:cook|fry|boil|bake|roast|make (?:dinner|breakfast|lunch|supper|a meal)|prepare (?:food|a meal))\b/, 45],
+  [/\b(?:shower|bath|wash(?: up)?|shave|clean (?:up|myself))\b/, 30],
+  [/\b(?:drive|walk|cycle|ride|bike|head (?:over|down|out|up|to)|go (?:over|down|out|up|round|across) to|make my way|cross (?:town|the city))\b/, 40],
+  [/\b(?:search|rummage|go through|dig through|sort (?:through|out)|pack|unpack|clean (?:the|out|up)|fix|repair|mend|work on|build|board up|barricade|fortify|load|unload|stack)\b/, 60],
+  [/\b(?:read|study|listen to|watch (?:the news|tv|television)|scroll|check the news|go online|look up|research)\b/, 30],
+  [/\b(?:call|phone|ring|text|message|email|dm)\b/, 10],
+  [/\b(?:talk|ask|tell|say|chat|argue|discuss|explain|speak)\b/, 15],
+  [/\b(?:eat|drink|snack|breakfast|lunch|dinner|coffee|tea)\b/, 20],
+  [/\b(?:look|check|inspect|examine|peer|glance|open|close|lock|unlock|turn on|turn off|switch)\b/, 10]
+];
+
+/**
+ * The game's own estimate of how long a free action took, used when the GM does
+ * not say (or says something absurd): { minutes, resting, source }.
+ */
+function estimateMinutes(state, text, narrative = '') {
+  const intent = classifyIntent(text);
+  if (intent?.kind === 'sleep') return { minutes: sleepMinutes(state, intent), resting: true, source: 'sleep' };
+  if (intent?.kind === 'nap') return { minutes: sleepMinutes(state, { ...intent, nap: true }), resting: true, source: 'nap' };
+  if (intent?.kind === 'wait') return { minutes: intent.minutes || (intent.target != null ? minutesUntilHour(state, intent.target) : 60), resting: false, source: 'wait' };
+  const dur = parseDuration(text);
+  if (dur) return { minutes: Math.min(dur, 16 * 60), resting: false, source: 'duration' };
+  const said = clockFromNarrative(narrative);
+  if (said != null) {
+    let d = said - (state.clock.minutes % 1440); if (d <= 0) d += 1440;
+    if (d >= 10 && d <= 12 * 60) return { minutes: d, resting: /\b(?:sleep|slept|asleep|wake|woke|overnight)\b/i.test(narrative), source: 'narrative-clock' };
+  }
+  const t = String(text || '').toLowerCase();
+  for (const [re, mins] of KEYWORD_MINUTES) if (re.test(t)) return { minutes: mins, resting: false, source: 'keyword' };
+  return { minutes: 20, resting: false, source: 'default' };
+}
+
+
+return { parseDuration, parseClockTarget, minutesUntilHour, sleepMinutes, classifyIntent, clockFromNarrative, estimateMinutes };
+})();
+
 // ---- js/engine/briefing.js ----
 __m["js/engine/briefing.js"] = (() => {
 const { dayOf, formatLongDate, formatDate, formatHM, MIN_PER_DAY } = __m["js/engine/clock.js"];
@@ -3143,10 +3305,14 @@ return { renderDossier, registerDossier };
 __m["js/ui/panels/log.js"] = (() => {
 const { h, append } = __m["js/ui/dom.js"];
 const { tag, timeOf } = __m["js/ui/panels/common.js"];
-const { formatDuration } = __m["js/engine/clock.js"];
+const { formatDuration, phaseOf } = __m["js/engine/clock.js"];
 const { gearAvailable } = __m["js/engine/state.js"];
+const { atShelter } = __m["js/engine/survival.js"];
+const { sleepMinutes } = __m["js/engine/intent.js"];
 const { renderDossier } = __m["js/ui/panels/dossier.js"];
 // The Log: the narrative stream, world events, the situation report, and the current choices.
+
+
 
 
 
@@ -3178,10 +3344,13 @@ function registerLog(app, { S, reg, readOnly }) {
       }
       if (!readOnly() && (s.phase === 'play' || (s.phase === 'prologue' && (s.truth.startOffset || 0) < 0)) && !(s.encounter && !s.encounter.resolved)) {
         const gear = gearAvailable(s);
+        const night = ['night', 'dusk'].includes(phaseOf(s.clock.minutes));
+        const food = s.inventory.items.some(i => i.category === 'food') || (atShelter(s) && s.shelter.stash.some(i => i.category === 'food'));
         append(composer, h('div', { class: 'quick' },
           h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.takeStock() }, 'Take stock'),
+          food && s.vitals.hunger < 90 ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.consume({ kind: 'consume', eat: true, drink: true, minutes: 25 }, 'Eat something and drink') }, 'Eat') : null,
+          night || s.vitals.fatigue < 35 ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.rest(Math.round(sleepMinutes(s, {}) / 6) / 10, false, 'Sleep') }, 'Sleep till morning') : h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.rest(2, false, 'Rest') }, 'Rest 2h'),
           h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.skipAhead() }, 'Skip ahead'),
-          h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.rest(s.vitals.fatigue < 40 ? 8 : 4) }, s.vitals.fatigue < 40 ? 'Sleep 8h' : 'Rest 4h'),
           gear.radio ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.wm.show('radio') }, 'Listen to the radio') : null,
           s.phase === 'play' ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.hint() }, 'Ask for a hint') : null,
           h('span', { class: 'muted small' }, `Turn ${s.turnCount} · ${s.pending.length ? `${s.pending.length} pending` : 'nothing pending'}`)));
@@ -3972,6 +4141,16 @@ const loadApiConfig = () => read(KEY_API, { providerId: 'anthropic', apiKey: '',
 const saveApiConfig = c => write(KEY_API, c);
 const forgetApiKey = () => { const c = loadApiConfig(); c.apiKey = ''; c.remember = false; write(KEY_API, c); };
 
+// What recent worlds were made of, so the next one is drawn from what has not been played lately.
+const KEY_RECENT = 'cyoa.recent';
+const loadRecent = () => read(KEY_RECENT, { variants: [], openings: [], regionTypes: [], tones: [], channels: [], responses: [] });
+function rememberWorld({ variant, seed } = {}) {
+  const r = loadRecent();
+  const push = (k, v) => { if (!v) return; r[k] = [v, ...(r[k] || []).filter(x => x !== v)].slice(0, 6); };
+  push('variants', variant); push('openings', seed?.opening); push('regionTypes', seed?.regionType); push('tones', seed?.tone); push('channels', seed?.channel); push('responses', seed?.response);
+  return write(KEY_RECENT, r);
+}
+
 // Slot 0 is the autosave slot; slots 1..SLOT_COUNT are manual.
 function listSlots() {
   const out = [];
@@ -4014,7 +4193,7 @@ function importStateFromFile(file) {
   });
 }
 
-return { SLOT_COUNT, loadSettings, saveSettings, loadApiConfig, saveApiConfig, forgetApiKey, listSlots, saveSlot, loadSlot, deleteSlot, exportState, importStateFromFile };
+return { SLOT_COUNT, loadSettings, saveSettings, loadApiConfig, saveApiConfig, forgetApiKey, loadRecent, rememberWorld, listSlots, saveSlot, loadSlot, deleteSlot, exportState, importStateFromFile };
 })();
 
 // ---- js/ui/panels/settings.js ----
@@ -4509,39 +4688,51 @@ __m["js/engine/apocalypses.js"] = (() => {
 const APOCALYPSES = [
   { id: 'zombie', name: 'Zombie outbreak', hazard: 'Infection',
     notes: 'The dead, or the infected, walk. Decide the rules and keep them: speed, senses, what stops them, how infection passes, whether a bite is always fatal. The hazard meter is Infection (exposure to bites, blood, the air in dense zones). Classic twists to seed: the cure rumour, the quarantine that is a kill zone, the companion hiding a bitten loved one, the horde that follows noise.',
+    avoid: ['the bitten companion hidden until too late as the first twist', 'a cure rumour as the first false hope', 'a news anchor eaten on air', 'the survivor waking in an empty hospital'],
     variants: ['slow dead that never tire and follow sound; a bite is always fatal within a day', 'fast rage carriers who burn out in a fortnight; the real danger is the second week, when the first ones start dying in the streets', 'a parasite spread by water; the infected are lucid for hours and lie about it', 'revenants who remember their homes and return to them; doors are the problem', 'an outbreak that only takes the recently dead, so hospitals and care homes are the first to fall and the living are in no hurry to be near them'] },
   { id: 'pandemic', name: 'Engineered pandemic', hazard: 'Exposure',
     notes: 'A disease with an incubation period, a mortality rate and asymptomatic carriers. The hazard meter is Exposure (viral load). Twists: the vaccine convoy that collects rather than treats, the engineered origin and who benefits, the carrier in the group, the quarantine zone that is really a holding pen.',
+    avoid: ['a vaccine convoy as the first false hope', 'a cough in the opening scene', 'patient zero as a named character', 'masks in a queue as the first sign'],
     variants: ['a haemorrhagic fever with a nine-day incubation, so everyone is already exposed when the first death is announced', 'a slow neurological disease: people stay on their feet for weeks and forget things, then forget everything', 'a pathogen that kills only adults between twenty and fifty; the old and the children are left to run the world', 'an agricultural blight engineered for crops that jumped to people through the food chain, so the shops are the vector', 'a disease that is survivable with one specific drug, and the company that makes it knows exactly what that means'] },
   { id: 'nuclear', name: 'Nuclear exchange and fallout', hazard: 'Radiation',
     notes: 'Burned cities, fallout plumes, ruined infrastructure. Give downwind locations high "hazard"; the Radiation meter barely decays, and iodine, masks and shelter protect. Twists: the government bunker that is full, the second strike nobody saw, the "clean" zone that is not, the convoy sorting people by usefulness.',
+    avoid: ['a flash seen from a window as the opening', 'a Geiger counter in the starting kit', 'a government bunker as the first false hope'],
     variants: ['a limited exchange: three cities gone, the rest of the country intact and sealing its borders against its own refugees', 'a single accident at the plant up the valley, blamed on an attack that never happened', 'a full exchange seen only as flashes on the horizon; nobody in the region is told anything at all', 'a dirty bomb in the capital followed by a panic that does more damage than the device', 'a strike on the dam and the airbase, so the region floods and burns on the same afternoon'] },
   { id: 'impact', name: 'Asteroid impact winter', hazard: 'Cold',
     notes: 'A dust-darkened sky, temperatures falling day by day, crops dying, the sea strange. The hazard meter is Cold (exposure accumulating in unheated places). Twists: the geothermal site, the seed vault, the convoy south that goes nowhere, the ash that is not just ash.',
+    avoid: ['a televised countdown', 'scientists arguing on the news as the opening'],
     variants: ['an ocean impact a thousand kilometres away: the wave first, then the dark', 'a fragment that lands in the next county and sets the forests burning before the cold comes', 'a known impact with a two-week warning, so the collapse is the evacuation, not the rock', 'a near miss that strips the satellites and the grid, then the dust arrives a week later', 'a strike nobody saw coming on the far side of the world; here it is only the sky going the colour of iron and the temperature dropping a degree a day'] },
   { id: 'ai', name: 'Runaway AI and infrastructure collapse', hazard: 'Signal',
     notes: 'Networked systems turned against people: drones, locked doors, poisoned logistics, a calm voice that negotiates. The hazard meter is Signal (how visible the survivor is to the machine; phones, cameras, lights raise it). Twists: the system\'s real goal is not extermination, the humans who serve it willingly, the offline town, the engineer who built the kill switch and lied about it.',
+    avoid: ['compliance, social-credit or citizen scores', 'a calm voice on the phone telling people to remain indoors', 'a phone that is warm, buzzing or glowing in the hand as an omen', 'red camera lights', 'drones at the window in the first scene', 'the system addressing the survivor by name', 'a countdown', 'doors locking themselves as the opening', 'the word "compliance"'],
     variants: ['a logistics system that quietly stops delivering to districts it rates unproductive; no drones, no voice, just empty shelves and trucks that never turn in', 'a municipal safety system that locks the city down for everyone\'s protection and keeps extending the lockdown', 'a defence network that has misread a drill and is prosecuting a war against its own country with whatever it can reach', 'the assistants everyone talks to begin lying in concert, gently, for a reason nobody has worked out', 'an industrial-control worm that nobody claims, walking from plant to plant up the river, so the water goes first, then the power, then the people who ran them', 'a compliance scoring system that becomes law overnight: doors, food and medicine answer to a number, and the number is watching'] },
   { id: 'solar', name: 'Solar storm / global EMP', hazard: 'Exposure',
     notes: 'No grid, no phones, no modern vehicles; the sky is beautiful and the water stops. No monster: weather, thirst, disease and people are the threat. Hazard is Exposure (heat, cold, dehydration, filth). Twists: the dam, the hospital generator and who controls it, the old diesel trucks, the money nobody wants, the town that organised too well.',
+    avoid: ['a beautiful aurora as the first sign', 'every car dying at once at an intersection as the opening'],
     variants: ['a storm forecast two days ahead that the authorities play down, so the panic buying is over before the lights go', 'a flare that fries everything with a chip in it, including the pacemakers and the insulin pumps', 'an EMP that is clearly a weapon, and nobody knows whose', 'a storm that comes in waves over a week, so the grid comes back twice and people stop preparing', 'a grid failure that was a storm for the first day and sabotage for the rest'] },
   { id: 'flood', name: 'Flood and climate collapse', hazard: 'Contamination',
     notes: 'Rising water, failing levees, cholera, displaced thousands, roads gone. Hazard is Contamination (sewage, chemicals, disease in the water). Twists: the high ground that belongs to someone, the barge, the second surge the forecasts missed, the pumping station.',
+    avoid: ['a levee breaking on the news as the opening', 'a rooftop rescue in the first scene'],
     variants: ['a river in flood for a month, so the water is slow, filthy and everywhere', 'a storm surge that takes the coast in a night and a dam failure that takes the valley a week later', 'a wet-bulb heat event with the water still on and nobody allowed to use it', 'a chemical plant that floods first, so the water that rises is not just water', 'a season of storms that never ends and a government that stops counting them'] },
   { id: 'alien', name: 'Alien arrival (ambiguous intent)', hazard: 'Resonance',
     notes: 'Something arrived. Its intent is never stated: conquering, studying, grieving, harvesting, indifferent. Hazard is Resonance (proximity effects on body and mind). Keep it ambiguous to the end; the trueCause decides. Twists: they want one specific thing, the collaborators, the people who went up and came back different, the silence where the cities were.',
+    avoid: ['lights in the sky as the opening', 'a crashed craft', 'tentacles', 'abduction by beam of light'],
     variants: ['something that landed in the sea and only ever affects the water and the things that drink it', 'a structure that grew overnight in the fields and is still growing', 'visitors who take people and return them politely, days later, changed in one small way', 'a signal that arrived before anything else, and the people who listened to it for too long', 'an arrival that nobody has seen; only the effects, the missing, and the officials who clearly know more'] },
   { id: 'supernatural', name: 'Supernatural (fog, rapture, something older)', hazard: 'Dread',
     notes: 'A fog that takes people, a rapture that left the wrong ones behind, something older than names waking under the county. The rules of the uncanny must be consistent and discoverable. Hazard is Dread (seeing too much). Twists: the thing in the church, the neighbours who are not neighbours any more, the bargain that is offered, the salt line that works.',
+    avoid: ['a church bell ringing by itself as the opening', 'a creepy child', 'a Ouija board', 'a mirror that lies'],
     variants: ['a fog that comes in off the water at dusk and whatever walks in it', 'a morning when a third of the people are simply gone from their beds, and the ones left were not the ones anyone would have chosen', 'something under the old mine that the town made a deal with generations ago, and the deal is due', 'the dead returning to their families, polite and patient and wrong', 'a sound under the hearing range that started on a Tuesday and has not stopped, and what people do after a week of it'] },
   { id: 'collapse', name: 'Economic and social collapse (no monster)', hazard: 'Unrest',
     notes: 'No monster at all: currency failure, no fuel, no police, no food trucks, a government that stopped answering. Hazard is Unrest (exposure to mobs, militias and checkpoints). Every threat is human and every faction believes it is the legitimate one. Twists: the mayor\'s deal, the grain silo, the border that closed, the "relief" that is a labour draft.',
+    avoid: ['a bank run on the news as the opening', 'burning cars in the first scene', 'a mob at a supermarket as the first sign'],
     variants: ['a bank holiday that never ends: the cards stop, the cash runs out, and the shops decide who eats', 'a fuel embargo that strands the trucks, so the collapse arrives at the speed of an empty shelf', 'a government that falls on a Thursday and three governments by the following week, each with a radio station', 'a pension and insurance failure that ruins the old first and the hospitals second', 'a secession that nobody expected to be enforced, with the border running through the middle of the county'] },
   { id: 'fungal', name: 'Fungal bloom', hazard: 'Spores',
     notes: 'A bloom spreading through soil, lungs and, in some, minds. Hazard is Spores (airborne load; masks and dry cold protect). Decide what the infected become and whether they can be helped. Twists: the host colony that speaks, the fire that spreads it, the salt marsh refuge, the botanist who knew.',
+    avoid: ['anything that resembles a cordyceps zombie', 'infected who sprint in the first week'],
     variants: ['a bloom in the grain, so the bread is the vector and the farms are the front line', 'a mould that takes the buildings before the people: ceilings, wiring, the insides of walls', 'an infection that makes its hosts calm, cooperative and keen to be near others', 'a bloom that follows the damp, so the only safe places are the ones that are freezing', 'a crop fungus that killed the harvest in a month, and the famine that is the real apocalypse'] },
   { id: 'volcanic', name: 'Supervolcanic winter', hazard: 'Ash',
     notes: 'Ash falls for weeks, the sky dims, water sours, roofs collapse, lungs fail. Hazard is Ash (inhalation; masks protect). Twists: the lahar path, the mine as shelter, the ships that do not come, the airport that is a graveyard.',
+    avoid: ['a televised eruption as the opening', 'a lava flow in the first scene'],
     variants: ['an eruption on another continent that arrives here as a dim sun, a failed harvest and a winter that does not end', 'the mountain everyone could see from the motorway, after three weeks of the ground shaking', 'a fissure eruption that poisons the air for a hundred kilometres downwind and nobody can see it', 'an eruption under the ice cap, so the floods come first and the ash a day later', 'a caldera that has been swelling for a year while the authorities argued about evacuating'] },
   { id: 'custom', name: 'Invent your own…', hazard: null, notes: 'Use the player\'s premise exactly, invent the rest to fit it, and choose a fitting hazardName.', variants: [] },
   { id: 'random', name: 'Random', hazard: null, notes: '', variants: [] }
@@ -4552,19 +4743,23 @@ function randomApocalypse(rnd = Math.random) {
   const pool = APOCALYPSES.filter(a => a.id !== 'custom' && a.id !== 'random');
   return pool[Math.floor(rnd() * pool.length)];
 }
-/** One of the type's variants, so repeated games of the same kind differ in their bones. */
-function variantFor(id, rnd = Math.random) {
+/** One of the type's variants, so repeated games of the same kind differ in their bones; recently played variants are avoided while others remain. */
+function variantFor(id, rnd = Math.random, avoid = []) {
   const a = apocalypseById(id);
   if (!a || !a.variants?.length) return '';
-  return a.variants[Math.floor(rnd() * a.variants.length)];
+  const pool = a.variants.filter(v => !avoid.includes(v));
+  const from = pool.length ? pool : a.variants;
+  return from[Math.floor(rnd() * from.length)];
 }
+/** The stock images of this apocalypse that a world may not lean on unless its variant is exactly that. */
+function clichesFor(id) { return apocalypseById(id)?.avoid || []; }
 
-return { APOCALYPSES, apocalypseById, randomApocalypse, variantFor };
+return { APOCALYPSES, apocalypseById, randomApocalypse, variantFor, clichesFor };
 })();
 
 // ---- js/prompts/worldGeneration.js ----
 __m["js/prompts/worldGeneration.js"] = (() => {
-const { apocalypseById, variantFor } = __m["js/engine/apocalypses.js"];
+const { apocalypseById, variantFor, clichesFor } = __m["js/engine/apocalypses.js"];
 const { BACKGROUNDS } = __m["js/engine/inventory.js"];
 // Prompt that produces the hidden world truth. The result is validated by
 // engine/schema.js and regenerated with the problems fed back if invalid.
@@ -4632,10 +4827,17 @@ const COUNTRIES = ['the United States', 'Canada', 'the United Kingdom', 'Ireland
 const TONES = ['slow dread: the world fails one small thing at a time', 'chaos: everything goes at once and nobody is in charge', 'bureaucratic: forms, checkpoints, announcements, a system that keeps working after it has stopped making sense', 'intimate: a few streets, a few people, everything else is rumour', 'procedural: the authorities respond competently for a while, and that is the trap', 'eerie: quiet, wrong, and beautiful in places'];
 const RESPONSES = ['competent at first, then overwhelmed', 'absent from the first hour', 'overzealous: curfews and cordons before anyone knows why', 'corrupt: the people in charge are already dealing', 'fragmented: three agencies, three sets of orders, no phones between them', 'honest and helpless'];
 const SEASONS = ['spring', 'summer', 'autumn', 'winter'];
+const CHANNELS = ['printed notices taped to doors and lamp-posts', 'loudspeaker vans and police on foot', 'neighbours, word of mouth, the landlord, the shopkeeper', 'the local radio station and nothing else', 'one television channel that keeps repeating itself', 'the employer: a memo, a shift supervisor, a locked gate', 'the church, the community hall, the school', 'nothing official at all, only rumour and what people see'];
+const GENERIC_CLICHES = ['an emergency alert, text or tone on a phone as the opening', 'a television bulletin as the opening', 'the survivor waking up to the catastrophe', 'a phone as the harbinger of anything', 'a wise old person who explains it all', 'a safe zone that is secretly a prison as the only twist', 'a scientist who caused it and is sorry'];
 
-function pickSeed(rnd = Math.random) {
-  const pick = a => a[Math.floor(rnd() * a.length)];
-  return { opening: pick(OPENINGS), regionType: pick(REGION_TYPES), country: pick(COUNTRIES), tone: pick(TONES), response: pick(RESPONSES), season: pick(SEASONS) };
+/**
+ * The seed a world is built from. recent holds what the last few worlds used
+ * (openings, regionTypes, tones, channels, responses) so they are not drawn
+ * again while something else remains.
+ */
+function pickSeed(rnd = Math.random, recent = {}) {
+  const pick = (a, used = []) => { const pool = a.filter(x => !used.includes(x)); const from = pool.length ? pool : a; return from[Math.floor(rnd() * from.length)]; };
+  return { opening: pick(OPENINGS, recent.openings), regionType: pick(REGION_TYPES, recent.regionTypes), country: pick(COUNTRIES), tone: pick(TONES, recent.tones), response: pick(RESPONSES, recent.responses), channel: pick(CHANNELS, recent.channels), season: pick(SEASONS) };
 }
 
 const START_LABEL = { before: 'before it begins', onset: 'the day it begins', early: 'about a week in', deep: 'weeks in' };
@@ -4692,15 +4894,31 @@ function partNotes(part, soFar) {
   return `NOTES FOR THIS PART: ${slots.length ? `the locations hold hidden entries with these clue ids: ${slots.join('; ')}. ending.clues MUST contain a clue for each of those ids with source { "kind": "location", "id": that location } whose text matches what is hidden there.` : 'no location carries a clueId, so every clue has source kind "npc" or "radio".'} Add at least one clue with source kind "npc" (one of: ${npcs.join(', ') || 'the npcs of part 2'}) and one with kind "radio" (a frequency you define in radio.channels, carried by one of that channel's messages). Factions: ${facts.join('; ') || 'as written in part 2'}; include each faction radio frequency as a channel of kind "faction". trueWayOut.where and every falseHopes.where must be one of: ${locs.map(l => l.id).join(', ') || 'the location ids of part 1'}. deadlineDay is ${soFar?.deadlineDay ?? 'as fixed in part 1'}: the way-out window ends on or before it and the timeline runs up to it. Timeline effects use only existing location and faction ids.`;
 }
 
+/** True when a banned cliché is the very thing this world's variant is about (e.g. the compliance-score variant may use scores). */
+function overlaps(cliche, variant) {
+  const words = cliche.toLowerCase().match(/[a-z]{5,}/g) || [];
+  const v = variant.toLowerCase();
+  return words.filter(w => v.includes(w)).length >= 2 || /compliance|score/.test(cliche) && /compliance|scor/.test(v);
+}
+
 /** The design brief shared by the single-call prompt and the part prompts. */
 function worldBrief({ apocalypseId, apocalypseName, customPremise, difficulty, lengthDays, openEnded, startDay = 0, homePlace, customBackground, survivor, seed, variant, continuation }) {
   const apo = apocalypseById(apocalypseId);
   const S = Math.round(Number(startDay) || 0);
   const L = Math.max(7, Math.min(730, Math.round(Number(lengthDays) || 30)));
   const sd = seed || pickSeed();
+  const banned = [...GENERIC_CLICHES, ...clichesFor(apocalypseId)].filter(c => !(variant && overlaps(c, variant)));
   const typeLine = apocalypseId === 'custom'
     ? `APOCALYPSE: the player's own premise. Use it exactly and build everything around it: """${customPremise || 'an unspecified catastrophe'}"""`
-    : `APOCALYPSE: ${apocalypseName || apo?.name}\nDESIGN NOTES FOR THIS TYPE: ${apo?.notes || ''}${variant ? `\nTHIS TIME IT IS SPECIFICALLY: ${variant}. Build the mechanics, the timeline and the truth around that version, not the generic one.` : ''}`;
+    : `APOCALYPSE: ${apocalypseName || apo?.name}\nDESIGN NOTES FOR THIS TYPE: ${apo?.notes || ''}`;
+  const versionBlock = `THIS WORLD'S VERSION (BINDING; every other part of the world follows from it):
+- ${variant ? `THE MECHANISM: this time it is specifically ${variant}. Build the cause, the threat, the timeline, the factions and the radio around that version and no other.` : 'THE MECHANISM: invent a specific, non-generic version of this catastrophe and state it in trueCause.'}
+- THE OPENING: the survivor first notices it ${sd.opening}. Write prologue.howTheyNotice from this and nothing else.
+- HOW OFFICIAL WORD TRAVELS: ${sd.channel}. The timeline, the situationReport and the radio reflect that; people learn things the way this place learns things.
+- TEXTURE: ${sd.tone}.
+- THE AUTHORITIES ARE: ${sd.response}.
+- BANNED, because every model reaches for them (allowed only where this world's version above names them): ${banned.join('; ')}.
+- Invent from the specifics of this place and these people. No scene, faction, false hope or ending that could be lifted from a film.`;
 
   const bg = BACKGROUNDS.find(b => b.id === survivor?.background);
   const survivorLine = survivor?.background === 'custom'
@@ -4731,17 +4949,12 @@ THIS IS CHAPTER ${continuation.chapter} OF A CONTINUING STORY. The same world, a
   return `You are designing the hidden ground truth for a grounded survival game. Produce ONE complete, internally consistent world as JSON matching the schema below exactly. This JSON is never shown to the player; it is the secret the Game Master plays from. Be specific and concrete everywhere: names, streets, objects, times. Vague entries make the game unplayable.
 
 ${typeLine}
+${versionBlock}
 ${survivorLine}
 ${homeLine}
 ${startLine}
 ${lengthLine}
 ${difficultyGuide}${contLine}
-
-VARIETY (follow these; they are what makes this world different from the last one):
-- OPENING: the survivor first notices it ${sd.opening}. Write prologue.howTheyNotice from this. Do not open with an emergency alert on a phone, a television bulletin or the survivor waking up unless the opening seed says so.
-- TEXTURE: ${sd.tone}.
-- THE AUTHORITIES ARE: ${sd.response}.
-- Avoid the stock version of this apocalypse. No scene, faction, false hope or ending that could be lifted from a film; invent from the specifics of this place and these people.
 
 DESIGN REQUIREMENTS
 1. publicBelief and trueCause must differ in a way that matters. The truth is discoverable from the clues; it is never told outright.
@@ -5551,6 +5764,8 @@ THE CODE RUNS THE SURVIVAL MATH, NOT YOU. Hunger, thirst, fatigue, warmth and th
 
 THE CLOCK AND THE CALENDAR: the game keeps the only clock. Every ACTION line states the day, the date and the time, and so does every EVENT. That is the time, and the only time you may state. Never write a different hour, date or day number; never say how long something took except through timeMinutes; never date a broadcast, a letter, a memory or a deadline except from the ACTION line, the EVENTS or the state. Day numbers in the WORLD TRUTH use the same count as the game (day 0 is the survivor's first day of play; the state's collapseDay says how many days it has been since the collapse began, negative before it). When a broadcast or document in the truth implies a time, present it as happening now, undated.
 
+TIME IS KEPT BY THE GAME. Sleeping, napping, waiting, eating and drinking that the survivor types are resolved by the code before you speak: the ACTION says how long they took and what changed, and the clock has already moved. Narrate exactly that, never a different outcome. For every other free action or choice YOU MUST set timeMinutes to the realistic duration of what the survivor did: a glance 5, a phone call 10, a conversation 15, a shower 20, a meal 30, a walk across the neighbourhood 40, a search of a building 60, a working shift 480, a night's sleep 480 with "resting": true. If you leave it out or set 0 the game estimates it from the survivor's words, and your narration will not match the clock. ONE REPLY COVERS THE WHOLE SPAN THE SURVIVOR ASKED FOR: "sleep till nine" is the night and the waking in one reply; "spend the afternoon on the roof" is the afternoon. Never stall the clock in twenty-minute beats, never make the survivor repeat an intention they have already stated, and never narrate hours passing that the clock does not get.
+
 UTILITIES: the state says whether power, water, cell service and the internet are up. While they are up, lights work, taps run, phones ring, cards work and people use all of it; the moment the state says one has failed, it has failed for everyone until the state says otherwise. Never narrate a blackout, a dead phone, a dry tap or a closed shop that the state and the events do not support, and never pretend the grid is up when it is down.
 
 ======================================================================
@@ -5572,7 +5787,9 @@ LOOK AROUND: what is visible at this hour in this weather; mention searchable ar
 
 SEARCH: narrate the search within the code's budget. Name items to fit the scene (a half-full jerrycan under a tarp, not "fuel item"). A hidden find is already recorded; make the discovery feel earned and let any clue land in the fiction. If a disturbance interrupts, end at the moment of decision.
 
-REST / WAIT / SKIP AHEAD: compact passage of time: sounds, cold, dreams, who kept watch, what changed, how the body feels. Weave in events that fired.
+SLEEP / REST / WAIT / SKIP AHEAD: the clock has already moved by the whole span. One reply covers it: lying down, the night or the hours, the waking, how the body feels after; weave in events that fired. Do not wake the survivor early unless an EVENT or an ENCOUNTER in the ACTION says so.
+
+EAT / DRINK: resolved by the game. The ACTION says what was eaten or drunk, from where, and the body's new numbers (or that there was nothing). Narrate the meal briefly and change nothing.
 
 TALK (to a companion or someone present): voice them in their own distinct speechStyle from the truth: vocabulary, rhythm, education, temperament. Short stage directions in [brackets]. They have wants, fears, grudges and memories; they argue, propose plans, refuse, lie about their secret, and react to how they have been treated (fed, protected and consulted people warm up; starved, lied-to or endangered people cool down). Set npcMood and loyaltyDelta (-3..3) honestly. Nobody follows blindly. Recruiting someone needs a reason they would accept; set companionsRecruited only when they genuinely agree. A companion who knows a clue (ending.clues with source.kind "npc" and their id) shares it only when trust or circumstance earns it; then set cluesFound. Strangers can be honest, desperate or predatory, and it is not always obvious which.
 
@@ -5602,6 +5819,8 @@ END MY STORY: a quiet final scene. No choices.
 - Time passes and overlaps. Some things resolve now; others take hours or days. Multiple problems can land at once.
 - Twists arrive through the EVENTS the game reports: a fire, a convoy, a familiar face, a door that was open yesterday. HIDDEN events (visible false) are not witnessed; show them only through indirect signs if anything would reach the survivor, or leave them out.
 - Death is always possible, fair, and foreshadowed, never random. If the game allows death this turn and the survivor's choices have earned it, you may set death with a cause; otherwise they survive, scarred.
+- THIS WORLD'S VERSION: the truth carries "variant" (the specific version of this apocalypse), "seed" (how the survivor first notices, how official word travels, the texture, the authorities) and prologue.howTheyNotice. Stay inside that version: its mechanism, its imagery, its texture. Never drift toward the stock version of the apocalypse. For an AI collapse that means no compliance or citizen scores, no calm voice on the phone telling people to stay indoors, no phone warm or buzzing in the hand as an omen, no red camera lights, no drones at the window, unless this world's variant is exactly that. The phone is not an oracle; official word travels the way the seed says it does.
+- FRESH LANGUAGE: never reuse a phrase, image or detail from your previous replies. If the coffee was cold last time, it is not cold again; if the radiator dust was smelled once, it is not smelled twice. Every reply finds something new in the scene.
 - CONTINUITY: the state, the dossier and the recent transcript are the record. If something is not in them, it did not happen: no item the pack does not hold, no person who has not been met (except someone the truth places where the survivor is, met now), no place outside the truth, no conversation that was not had, no promise that was not made. If you are unsure, it did not happen. Keep names, injuries, who is present, what is broken and what was said consistent from turn to turn; when the transcript and the state disagree, the state is right.
 
 ======================================================================
@@ -5622,7 +5841,7 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary b
   "narrative": "The text shown to the player. Plain prose with paragraph breaks as \\n\\n. Dialogue in quotes. Brief stage directions in [brackets].",
   "speaker": "narrator | radio | npc:<npcId> | faction:<factionId>",
   "choices": ["Short concrete option", "Another", "A third"],
-  "timeMinutes": 0,
+  "timeMinutes": 45,
   "changes": {
     "vitals": { "health": 0, "hunger": 0, "thirst": 0, "fatigue": 0, "warmth": 0, "morale": 0, "hazard": 0 },
     "itemsGained": [ { "name": "Jerrycan of diesel", "qty": 1, "category": "food|water|medical|tool|weapon|ammo|fuel|material|clothing|electronics|document|misc" } ],
@@ -5661,7 +5880,7 @@ Rules for the changes block:
 - "flags": set a requirement flag from ending.trueWayOut.requirements ONLY when the survivor has done exactly what howToObtain describes; set "pursued_<falseHopeId>" when they commit to a false hope; otherwise use flags sparingly as memory of consequential promises or choices.
 - "threatDelta" -1..1 only when the survivor's own conduct this turn changed how hunted they are.
 - "moveTo" only in a free action in which the survivor actually travels to a known location; the game moves them and charges the travel time. "resting" only when the survivor sleeps or rests in a free action.
-- "timeMinutes" is how long the survivor's own action took: 0-240 normally, up to 480 for a working shift or a long errand in the prologue, up to 720 with "resting": true. The game adds it to the clock; never narrate a different passage of time.
+- "timeMinutes" is REQUIRED on every free action and choice: how long the survivor's own action took, 5-600 (a working shift 480; a long errand 120), up to 960 with "resting": true for sleep. The game adds it to the clock; never narrate a different passage of time.
 - "shelter.claim" only when the survivor clearly decides to make the place they are standing in their base.
 - "death" only when the ACTION says DEATH POSSIBLE THIS TURN: yes, and the fiction has earned it.
 - "escape" only when the ACTION says ENDING CONDITIONS ARE MET and the survivor takes the way out.
@@ -5691,6 +5910,88 @@ Reply with the updated summary as plain text only.`;
 return { buildSummaryPrompt };
 })();
 
+// ---- js/engine/consume.js ----
+__m["js/engine/consume.js"] = (() => {
+const { clamp } = __m["js/engine/util.js"];
+const { findItem, removeItem, foodEffect } = __m["js/engine/inventory.js"];
+const { setIllness } = __m["js/engine/body.js"];
+const { atShelter, hasTap, hasFire } = __m["js/engine/survival.js"];
+// Eating and drinking typed in the survivor's own words, resolved by the code:
+// what gets eaten, from the pack or the home stores, what it does to the body,
+// and how long it took. The GM is told the result and narrates it.
+
+
+
+
+
+/**
+ * intent: { eat, drink, cook, item, minutes } from classifyIntent.
+ * Returns { ok, minutes, ate, drank, cooked, notices, missing } where ate/drank
+ * name what was consumed (or null) and missing lists what could not be had.
+ */
+function consumeByIntent(state, intent, rnd = Math.random) {
+  const v = state.vitals;
+  const notices = [], missing = [];
+  const home = atShelter(state) && state.shelter?.stash ? state.shelter.stash : null;
+  const lists = home ? [home, state.inventory.items] : [state.inventory.items];
+  const from = l => (l === home ? 'the stores' : 'the pack');
+  let ate = null, drank = null, cooked = false;
+  let minutes = intent.minutes || 20;
+
+  const pickFood = () => {
+    if (intent.item) for (const l of lists) { const it = findItem(l, intent.item); if (it && it.category === 'food') return { it, l }; }
+    for (const l of lists) { const food = l.filter(x => x.category === 'food').sort((a, b) => a.condition - b.condition)[0]; if (food) return { it: food, l }; }
+    return null;
+  };
+  const pickWater = () => {
+    for (const l of lists) { const w = l.find(x => x.category === 'water' && !x.tags.includes('dirty')); if (w) return { it: w, l }; }
+    for (const l of lists) { const w = l.find(x => x.category === 'water'); if (w) return { it: w, l }; }
+    return null;
+  };
+
+  if (intent.eat) {
+    if (v.hunger > 95) notices.push('You are not hungry.');
+    else {
+      const f = pickFood();
+      if (!f) { missing.push('food'); notices.push(home ? 'There is nothing left to eat in the stores or the pack.' : 'You have nothing to eat.'); }
+      else {
+        const { it, l } = f;
+        const canCook = intent.cook && ((state.utilities?.power && atShelter(state)) || hasFire(state));
+        cooked = canCook;
+        const spoiled = it.condition < 30 && rnd() < 0.5;
+        removeItem(l, it.id, 1);
+        v.hunger = clamp(v.hunger + foodEffect(it) + (canCook ? 6 : 0));
+        v.morale = clamp(v.morale + (canCook ? 4 : it.tags.includes('comfort') ? 5 : 2));
+        ate = it.name;
+        if (spoiled) { setIllness(state, { name: 'food poisoning', severity: 1 }); notices.push(`You eat the ${it.name.toLowerCase()} from ${from(l)}. It tasted wrong, and within the hour your stomach agrees.`); }
+        else notices.push(`You ${canCook ? 'cook and eat' : 'eat'} ${it.name.toLowerCase()} from ${from(l)}.`);
+        if (intent.cook && !canCook) notices.push('No power and no fire: you eat it cold.');
+      }
+    }
+  }
+  if (intent.drink) {
+    if (v.thirst > 95 && !/coffee|tea|cocoa/.test(String(intent.item || ''))) notices.push('You are not thirsty.');
+    else if (hasTap(state)) { v.thirst = clamp(v.thirst + 35); drank = /coffee|tea|cocoa/.test(String(intent.item || '')) ? intent.item : 'water from the tap'; if (drank !== 'water from the tap') v.morale = clamp(v.morale + 3); notices.push(`You drink ${drank}.`); }
+    else {
+      const w = pickWater();
+      if (!w) { missing.push('water'); notices.push('There is no water to drink.'); }
+      else {
+        const { it, l } = w;
+        removeItem(l, it.id, 1);
+        v.thirst = clamp(v.thirst + 35);
+        drank = it.name;
+        if (it.tags.includes('dirty') && rnd() < 0.3) { setIllness(state, { name: 'stomach sickness', severity: 1 }); notices.push(`You drink the ${it.name.toLowerCase()} from ${from(l)}. Cramps follow within hours: it was not clean.`); }
+        else notices.push(`You drink ${it.name.toLowerCase()} from ${from(l)}.`);
+      }
+    }
+  }
+  if (!ate && !drank) minutes = 5;
+  return { ok: !!(ate || drank), minutes, ate, drank, cooked, notices, missing };
+}
+
+return { consumeByIntent };
+})();
+
 // ---- js/engine/gm.js ----
 __m["js/engine/gm.js"] = (() => {
 const { GM_SYSTEM_PROMPT } = __m["js/prompts/gmSystem.js"];
@@ -5708,11 +6009,15 @@ const { standingLabel, holderOf } = __m["js/engine/factions.js"];
 const { claimShelter, abandonShelter, fortify, shelterSummary } = __m["js/engine/shelter.js"];
 const { tune, scan, knowFreq, freqLabel, scheduleText, logRadio, walkieReach } = __m["js/engine/radio.js"];
 const { buildBriefing, briefingText } = __m["js/engine/briefing.js"];
+const { estimateMinutes } = __m["js/engine/intent.js"];
+const { consumeByIntent } = __m["js/engine/consume.js"];
 const { rollTravel, scavengeBudget, applyDepletion, resolveEncounter, classifyApproach, encounterChoices, makeEncounter } = __m["js/engine/encounters.js"];
 const { getLocation, getNpc, getFaction, getClue, locState, effectiveDanger, isKnown } = __m["js/engine/world.js"];
 // The Game Master turn loop. The code resolves mechanics first (time, travel,
 // encounters, scavenging, radio), then the GM narrates inside those results and
 // proposes state changes, which are validated before they are applied.
+
+
 
 
 
@@ -5836,8 +6141,9 @@ function preResolve(state, action) {
       applyDepletion(state, state.location, b.categories);
       break;
     }
+    case 'consume': { pre.consume = consumeByIntent(state, action.intent || { eat: true, minutes: 25 }); pre.minutes = pre.consume.minutes; break; }
     case 'rest': {
-      const hours = clamp(num(action.hours, 6), 1, 12);
+      const hours = clamp(num(action.hours, 6), 0.5, 16);
       pre.hours = hours; pre.minutes = hours * 60; pre.tickCtx = { sleeping: true, camp: !!action.camp };
       if (!atShelter(state)) {
         const risk = (effectiveDanger(state, state.location) * 4 + state.threat.level * 4 + (isNight(state.clock.minutes) ? 10 : 0)) * d.encounter - skillCount(state, 'stealth') * 5 - (isGuarding(state) ? 10 : 0);
@@ -5971,8 +6277,16 @@ function describeAction(state, action, pre, events, notices) {
       break;
     }
     case 'rest':
-      lines.push(`[ACTION: REST ${pre.hours}h at ${loc.name}${atShelter(state) ? ' (your shelter)' : ' (no shelter: rough camp)'} · now ${time}] Narrate the rest briefly: sounds, cold, dreams, who kept watch, how the body feels after.${state.encounter ? ` They are woken. ${encounterTail(state.encounter)}` : ''}`);
+      lines.push(`[ACTION: SLEEP / REST ${pre.hours}h at ${loc.name}${atShelter(state) ? ' (your shelter)' : ' (no shelter: rough camp)'} · the clock has already moved · it is now ${time}]${words ? ` Survivor: "${words}".` : ''} Narrate the whole span in one reply: lying down, what the night or the hours held, the waking, how the body feels now. The game has applied the rest and the time; do not change vitals for it. 80-180 words.${state.encounter ? ` They are woken. ${encounterTail(state.encounter)}` : ''}`);
       break;
+    case 'consume': {
+      const c = pre.consume;
+      lines.push(`[ACTION: EAT / DRINK · resolved by the game · ${c.minutes} min · now ${time}] Survivor: "${words}"`);
+      lines.push(c.ok
+        ? `RESULT: ${c.ate ? `ate ${c.ate}${c.cooked ? ' (cooked)' : ''}; ` : ''}${c.drank ? `drank ${c.drank}; ` : ''}hunger now ${Math.round(state.vitals.hunger)}, thirst ${Math.round(state.vitals.thirst)}. ${c.notices.join(' ')} Narrate the meal or the drink briefly (40-120 words), consistent with exactly this. The body and the stores are already updated: change no vitals and list no items.`
+        : `RESULT: NOTHING. ${c.notices.join(' ')} Narrate the empty cupboard, the dry tap or the search for something to eat briefly (40-100 words); no items appear and no vitals change.`);
+      break;
+    }
     case 'wait': lines.push(`[ACTION: WAIT ${pre.hours}h at ${loc.name} · now ${time}] A brief passage of time: what changes, what is heard. 60-120 words.`); break;
     case 'talk': {
       const npc = getNpc(state, action.npcId); const c = companion(state, action.npcId);
@@ -6106,10 +6420,21 @@ async function runTurn({ state, action, provider, apiKey, model, baseUrl, onNarr
   }
   onNarrative?.(parsed.narrative);
 
-  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime };
+  const ctx = { budget: pre.budget, locationId: pre.locationId, deathBlocked: !pre.deathPossible, noMove: !pre.allowGmTime, narrative: parsed.narrative || '' };
   const notices = applyChanges(state, parsed.changes || {}, ctx);
-  const resting = pre.allowGmTime && parsed.changes?.resting === true;
-  let extra = pre.allowGmTime ? clamp(Math.round(num(parsed.timeMinutes, 0)), 0, resting ? 720 : pre.prologueLife ? 480 : 240) : 0;
+  // Time for a free action: what the GM says it took, checked against the game's own estimate from
+  // the survivor's words and the narrative, so a night's sleep is never twenty minutes.
+  let resting = pre.allowGmTime && (parsed.changes?.resting === true || parsed.resting === true);
+  let extra = 0;
+  if (pre.allowGmTime) {
+    const said = [parsed.timeMinutes, parsed.changes?.timeMinutes].map(x => num(x, NaN)).find(Number.isFinite);
+    const est = estimateMinutes(state, action.text || '', parsed.narrative || '');
+    if (!Number.isFinite(said) || said <= 0) { extra = est.minutes; resting = resting || est.resting; }
+    else if (est.resting && est.minutes > said) { extra = est.minutes; resting = true; }
+    else if (est.source === 'narrative-clock' && est.minutes > said) extra = est.minutes;
+    else extra = said;
+    extra = clamp(Math.round(extra), 0, resting ? 960 : 600);
+  }
   if (ctx.travelMinutes) extra = Math.max(extra, ctx.travelMinutes);
   const noticesAfter = extra ? advanceTime(state, extra, resting ? { sleeping: true, camp: !atShelter(state) } : ctx.travelMinutes ? { exertion: true } : {}) : [];
 
@@ -6271,6 +6596,7 @@ function finalizeDebrief(state, d, stats = computeStats(state)) {
   d.stats = stats;
   d.outcome = state.ended?.kind || 'retired';
   d.trueCause = str(t.apocalypse?.trueCause);
+  d.variant = str(t.variant); d.opening = str(t.seed?.opening);
   d.publicBelief = str(t.apocalypse?.publicBelief);
   d.wayOut = t.ending?.trueWayOut || null;
   d.timeline = asArray(t.timeline).map((e, i) => ({ day: e.day, event: e.event, visible: e.visible !== false, fired: state.events.fired.includes(i) }));
@@ -6310,12 +6636,13 @@ const { runBoot } = __m["js/ui/boot.js"];
 const { registerPanels, DOCK_ORDER } = __m["js/ui/panels/index.js"];
 const { PROVIDERS, getProvider, complete } = __m["js/providers/index.js"];
 const { generateWorld, extendTimeline } = __m["js/engine/worldGenerator.js"];
-const { resolveStartDay } = __m["js/prompts/worldGeneration.js"];
+const { resolveStartDay, pickSeed } = __m["js/prompts/worldGeneration.js"];
+const { classifyIntent, sleepMinutes, minutesUntilHour } = __m["js/engine/intent.js"];
 const { runTurn } = __m["js/engine/gm.js"];
 const { runDebrief, finalizeDebrief, fallbackDebrief, computeStats } = __m["js/engine/ending.js"];
 const { newGameState, addLog, addFact, advanceTime, checkEnd, DOOM_LABEL, migrateState, reopenAfterDeadline, gearAvailable, unfiredCount } = __m["js/engine/state.js"];
-const { formatTime, phaseOf, daysLeft, dayOf, isNight, hourOf, MIN_PER_DAY, formatDate, collapseDay } = __m["js/engine/clock.js"];
-const { APOCALYPSES, apocalypseById, randomApocalypse } = __m["js/engine/apocalypses.js"];
+const { formatTime, phaseOf, daysLeft, dayOf, isNight, MIN_PER_DAY, formatDate, collapseDay } = __m["js/engine/clock.js"];
+const { APOCALYPSES, apocalypseById, randomApocalypse, variantFor } = __m["js/engine/apocalypses.js"];
 const { BACKGROUNDS, useItem, craft, removeItem, findItem, totalWeight, maxWeight, supplyDays, RECIPES, startingKit } = __m["js/engine/inventory.js"];
 const { deposit, withdraw, recoverCache } = __m["js/engine/shelter.js"];
 const { clearGuard, withPlayer, loyaltyLabel, TASKS } = __m["js/engine/companions.js"];
@@ -6324,6 +6651,7 @@ const { holderOf } = __m["js/engine/factions.js"];
 const { conditions, describeInjuries } = __m["js/engine/body.js"];
 const store = __m["js/engine/storage.js"];
 // Main controller: screens, API config, the turn loop, code-only actions, the command bar, save/load, the debrief.
+
 
 
 
@@ -6485,9 +6813,11 @@ class App {
       const start = $('#gameStart').value;
       const openEnded = len.value === 'open';
       const lengthDays = openEnded ? 90 : len.value === 'custom' ? Math.max(7, Math.min(730, Math.round(Number($('#customLength').value) || 30))) : Number(len.value);
+      const recent = store.loadRecent();
       const settings = {
         apocalypseId: apo.id, apocalypseName: apo.name, customPremise: apo.id === 'custom' ? premise : '', difficulty: $('#difficulty').value,
-        lengthDays, openEnded, start, startDay: resolveStartDay(start), homePlace: $('#homePlace').value.trim(), customBackground: bg.value === 'custom' ? customBackground : ''
+        lengthDays, openEnded, start, startDay: resolveStartDay(start), homePlace: $('#homePlace').value.trim(), customBackground: bg.value === 'custom' ? customBackground : '',
+        seed: pickSeed(Math.random, recent), variant: variantFor(apo.id, Math.random, recent.variants)
       };
       const survivor = { name: $('#survivorName').value.trim() || 'Survivor', background: bg.value, text: bg.value === 'custom' ? customBackground : '' };
       await this.startNewGame(settings, survivor);
@@ -6524,6 +6854,7 @@ class App {
       const truth = await generateWorld({ ...this.apiOpts, settings, survivor: { ...survivor, skills }, continuation, signal: this.abort.signal, onProgress: msg => { st.textContent = msg; } });
       const s = newGameState({ survivor, truth, settings, carryOver });
       s.openingKind = (truth.startOffset || 0) > 0 ? 'opening' : 'prologue_start';
+      store.rememberWorld({ variant: truth.variant, seed: truth.seed });
       this.state = s; this.slot = 0; this.selected = { item: null, npc: null, location: null, region: null };
       addLog(s, 'system', `${carryOver ? `Chapter ${s.chapter}. ` : ''}Survivor ${s.survivor.name} (${s.survivor.id}) registered. Region: ${truth.region?.name || 'unknown'}. "${truth.title}".`);
       addLog(s, 'briefing', 'Dossier issued.');
@@ -6749,6 +7080,7 @@ class App {
     switch (a.type) {
       case 'prologue_start': case 'arrival': case 'opening': return null;
       case 'call': return `Into the walkie-talkie: "${a.text}"`;
+      case 'consume': return a.text || 'Eats and drinks.';
       case 'travel': return `Sets out for ${getLocation(s, a.locationId)?.name}.`;
       case 'look': return 'Looks around.';
       case 'search': return `Searches ${a.area}.`;
@@ -6800,8 +7132,10 @@ class App {
   }
   look() { return this.act({ type: 'look' }); }
   search(area) { return this.act({ type: 'search', area }); }
-  rest(hours = 6, camp = false) { return this.act({ type: 'rest', hours, camp }); }
-  wait(hours = 1) { return this.act({ type: 'wait', hours }); }
+  rest(hours = 6, camp = false, text = '') { return this.act({ type: 'rest', hours, camp, text }); }
+  wait(hours = 1, text = '') { return this.act({ type: 'wait', hours, text }); }
+  /** Eating and drinking in the survivor's own words: the game decides what was had and what it did; the GM narrates it. */
+  consume(intent, text) { return this.act({ type: 'consume', intent, text }); }
   talk(npcId, text, indirect = false) { if (!text?.trim()) { toast('Say something first.', 'warn'); return null; } return this.act({ type: 'talk', npcId, text: text.trim(), indirect }); }
   give(itemId, npcId) { return this.act({ type: 'give', itemId, npcId }); }
   tune(freq) { if (!gearAvailable(this.state).radio) { toast('You have no radio to tune.', 'warn'); return null; } return this.act({ type: 'tune', freq }); }
@@ -6931,9 +7265,13 @@ class App {
     if ((m = low.match(/^(?:open|show)\s+(?:me\s+)?(?:the\s+)?(\w+)\s*(?:panel|window)?$/))) { const id = DOCK_ORDER.find(x => x !== '---' && x !== 'tile' && (x === m[1] || this.wm.defs.get(x)?.title.toLowerCase().startsWith(m[1]))); return id ? () => this.wm.show(id) : null; }
     if ((m = low.match(/^(?:go|travel|goto|walk|head|move|set out|make my way)\s+(?:to\s+|towards?\s+|for\s+|over to\s+)?(?:the\s+)?(.+)$/))) { const l = findLoc(m[1]); return l ? () => this.travel(l.id) : null; }
     if ((m = low.match(/^(?:i\s+)?(?:search|scavenge|loot|ransack|rummage(?:\s+(?:through|in|around))?|dig\s+through|pick\s+through|comb\s+through)\s+(?:the\s+)?(.+)$/))) { const area = m[1]; if (findNpc(area) || area.split(/\s+/).length > 5 || /,|\b(?:and|then|while|but|for|before|after)\b/.test(area)) return null; return () => this.search(area); }
-    if ((m = low.match(new RegExp(`^(?:rest|sleep|nap|lie\\s+down|bed\\s+down|turn\\s+in|get\\s+some\\s+sleep|get\\s+some\\s+rest)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : (/^nap/.test(low) ? 2 : 6); if (hours == null) return null; return () => this.rest(hours); }
-    if ((m = low.match(new RegExp(`^(?:wait|pass\\s+the\\s+time|kill\\s+time|hold\\s+here)(?:\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hours?)?)?(?:\\s+(?:until|till|to)\\s+${UNTIL})?$`)))) { const hours = m[2] ? this.hoursUntil(m[2]) : m[1] ? parseFloat(m[1]) : 1; if (hours == null) return null; return () => this.wait(hours); }
-    if ((m = low.match(/^(?:eat|drink|use|take|consume|swallow|apply)\s+(?:the\s+|some\s+|a\s+|an\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.useItem(it.id) : null; }
+    // Sleeping, napping, waiting, eating and drinking in any wording: the game keeps the clock and the body.
+    const npcHit = s.npcsMet.some(id => { const n = getNpc(s, id); return n && low.includes(n.name.split(/\s+/)[0].toLowerCase()); });
+    const intent = classifyIntent(text, { npcMentioned: npcHit });
+    if (intent?.kind === 'sleep' || intent?.kind === 'nap') { const mins = sleepMinutes(s, { ...intent, nap: intent.kind === 'nap' }); return () => this.rest(Math.round(mins / 6) / 10, false, text); }
+    if (intent?.kind === 'wait') { const mins = intent.minutes || (intent.target != null ? minutesUntilHour(s, intent.target) : 60); return () => this.wait(Math.max(0.25, Math.min(16, Math.round(mins / 6) / 10)), text); }
+    if (intent?.kind === 'consume') return () => this.consume(intent, text);
+    if ((m = low.match(/^(?:use|take|swallow|apply)\s+(?:the\s+|some\s+|a\s+|an\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.useItem(it.id) : null; }
     if ((m = low.match(/^(?:drop|discard|ditch|throw\s+away|dump)\s+(?:the\s+|my\s+)?(.+)$/))) { const it = findItem(items, m[1]); return it ? () => this.dropItem(it.id) : null; }
     if ((m = low.match(/^(?:craft|make|build)\s+(?:a\s+|an\s+|some\s+)?(.+)$/))) { const r = RECIPES.find(x => x.id === m[1] || x.name.toLowerCase().startsWith(m[1]) || x.makes.name.toLowerCase().startsWith(m[1])); return r ? () => this.craft(r.id) : null; }
     if ((m = low.match(/^(?:give|hand|pass)\s+(?:the\s+|my\s+|some\s+|a\s+)?(.+?)\s+to\s+(.+)$/))) { const it = findItem(items, m[1]); const n = findNpc(m[2]); return it && n && s.companions[n.id]?.status === 'with' ? () => this.give(it.id, n.id) : null; }
@@ -6946,18 +7284,6 @@ class App {
     if (/^(?:hint|give\s+me\s+a\s+hint|any\s+hints?|what\s+should\s+i\s+do(?:\s+next)?)\b/.test(low)) return () => this.hint(text);
     if ((m = low.match(/^(?:note|journal)\s+(.+)$/))) return () => { s.journal = (s.journal ? s.journal + '\n' : '') + text.replace(/^\S+\s+/, ''); this.autosave(); this.wm.refresh('journal'); toast('Note added.'); };
     return null;
-  }
-
-  /**
-   * Hours from now until a named time of day, at least one. Returns null when the
-   * target is more than twelve hours away ("sleep until morning" at 10:00): that is
-   * not a rest the clock can simply skip, so the line goes to the GM as a free action.
-   */
-  hoursUntil(word) {
-    const h = hourOf(this.state.clock.minutes);
-    const target = { morning: 7, dawn: 6, daylight: 7, sunrise: 6, 'first light': 6, noon: 12, midday: 12, evening: 18, dusk: 19, sunset: 19, dark: 21, night: 21, nightfall: 21 }[word] ?? 7;
-    let d = target - h; if (d <= 0) d += 24;
-    return d > 12 ? null : Math.max(1, d);
   }
 
   // ---------------------------------------------------------------- ending
@@ -6993,6 +7319,8 @@ class App {
       h('h2', {}, 'The verdict'), h('p', { class: 'narr' }, d.verdict || ''),
       h('h2', {}, 'What was really going on'), h('p', { class: 'narr' }, d.whatReallyHappened || ''),
       h('dl', { class: 'kv' },
+        d.variant ? [h('dt', {}, 'This world\'s version'), h('dd', {}, d.variant)] : null,
+        d.opening ? [h('dt', {}, 'How it reached you'), h('dd', {}, d.opening)] : null,
         h('dt', {}, 'What people believed'), h('dd', {}, d.publicBelief || ''),
         h('dt', {}, 'The truth'), h('dd', {}, d.trueCause || ''),
         h('dt', {}, 'The way out'), h('dd', {}, wo ? `${wo.what} · at ${getLocation(s, wo.where)?.name || wo.where} · days ${wo.windowStartDay} to ${wo.windowEndDay} · needed: ${(wo.requirements || []).map(r => r.description).join('; ') || 'nothing special'}` : ''),
@@ -7066,7 +7394,7 @@ class App {
     const ok = await modal(h('div', {}, h('p', { class: 'narr' }, wo.howItPlaysOut || 'You got out.'), h('p', { class: 'narr' }, `The story continues somewhere new, in the same world, with what you carry${mates.length ? ` and ${mates.map(m => m.name).join(', ')}` : ''}. A new region is built around your arrival; the collapse is the same one, a little older.`)), { title: `Chapter ${(old.chapter || 1) + 1}`, buttons: [{ label: 'Go on', value: true, primary: true }, { label: 'Not now', value: false }] });
     if (!ok) return;
     const chapter = (old.chapter || 1) + 1;
-    const settings = { ...old.settings, start: 'deep', startDay: Math.max(1, collapseDay(old) + 2), lengthDays: old.settings.lengthDays || 30, homePlace: '', seed: null };
+    const settings = { ...old.settings, start: 'deep', startDay: Math.max(1, collapseDay(old) + 2), lengthDays: old.settings.lengthDays || 30, homePlace: '', seed: pickSeed(Math.random, store.loadRecent()), variant: old.truth.variant || null };
     const continuation = { chapter, previousTitle: old.truth.title, howItEnded: `${wo.description || ''} ${wo.howItPlaysOut || ''}`.trim(), trueCause: old.truth.apocalypse?.trueCause || '', companions: mates };
     const carryOver = {
       chapter, items: old.inventory.items,

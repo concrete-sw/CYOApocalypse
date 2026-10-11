@@ -2,8 +2,10 @@
 
 import { h, append } from '../dom.js';
 import { tag, timeOf } from './common.js';
-import { formatDuration } from '../../engine/clock.js';
+import { formatDuration, phaseOf } from '../../engine/clock.js';
 import { gearAvailable } from '../../engine/state.js';
+import { atShelter } from '../../engine/survival.js';
+import { sleepMinutes } from '../../engine/intent.js';
 import { renderDossier } from './dossier.js';
 
 export function registerLog(app, { S, reg, readOnly }) {
@@ -31,10 +33,13 @@ export function registerLog(app, { S, reg, readOnly }) {
       }
       if (!readOnly() && (s.phase === 'play' || (s.phase === 'prologue' && (s.truth.startOffset || 0) < 0)) && !(s.encounter && !s.encounter.resolved)) {
         const gear = gearAvailable(s);
+        const night = ['night', 'dusk'].includes(phaseOf(s.clock.minutes));
+        const food = s.inventory.items.some(i => i.category === 'food') || (atShelter(s) && s.shelter.stash.some(i => i.category === 'food'));
         append(composer, h('div', { class: 'quick' },
           h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.takeStock() }, 'Take stock'),
+          food && s.vitals.hunger < 90 ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.consume({ kind: 'consume', eat: true, drink: true, minutes: 25 }, 'Eat something and drink') }, 'Eat') : null,
+          night || s.vitals.fatigue < 35 ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.rest(Math.round(sleepMinutes(s, {}) / 6) / 10, false, 'Sleep') }, 'Sleep till morning') : h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.rest(2, false, 'Rest') }, 'Rest 2h'),
           h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.skipAhead() }, 'Skip ahead'),
-          h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.rest(s.vitals.fatigue < 40 ? 8 : 4) }, s.vitals.fatigue < 40 ? 'Sleep 8h' : 'Rest 4h'),
           gear.radio ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.wm.show('radio') }, 'Listen to the radio') : null,
           s.phase === 'play' ? h('button', { class: 'btn small ghost', type: 'button', onClick: () => app.hint() }, 'Ask for a hint') : null,
           h('span', { class: 'muted small' }, `Turn ${s.turnCount} · ${s.pending.length ? `${s.pending.length} pending` : 'nothing pending'}`)));

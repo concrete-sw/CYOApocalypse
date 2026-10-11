@@ -93,9 +93,14 @@ The **code owns the game state; the AI narrates and role-plays inside it.**
    and requirements, at least 3 clues that reveal it, 2 or 3 false hopes, a
    calendar date, and a deadline. Every world is drawn from a different seed:
    a variant of the apocalypse (an AI that stops deliveries is not the one that
-   locks the city down), how you first notice, what kind of place you live in,
-   the tone, and how the authorities behave, so two games of the same kind do
-   not tell the same story. The JSON is validated (`src/js/engine/schema.js`)
+   locks the city down), how you first notice, how official word travels,
+   what kind of place you live in, the tone, and how the authorities behave.
+   The seed is binding, the stock images of each apocalypse are banned unless
+   this world's variant is exactly that (no compliance scores and warm phones
+   in every AI collapse), the game remembers what recent worlds used and
+   draws from what has not been played, and the GM is told to stay inside
+   this world's version, so two games of the same kind do not tell the same
+   story. The JSON is validated (`src/js/engine/schema.js`)
    and regenerated with the errors fed back if it is not playable; any day
    number or clock time the model writes inside an event is stripped and the
    hour it named becomes the event's real hour, so the game clock and the
@@ -168,10 +173,16 @@ history for it. *Open-ended* games have no deadline from the start.
   buttons. The choices are suggestions, not a menu: type anything at the
   `SURVIVOR>` prompt and the world attempts exactly what you describe, in
   your words, speech included. The GM decides what is possible and what it
-  costs. A handful of shortcuts (`map`, `inventory`, `rest 4 hours`, `go to
-  the marina`, `tune 162.4`, `save`) fire only when their target is real;
-  anything else goes to the GM untouched. Start a line with `/` to force a
-  shortcut.
+  costs. Sleeping, napping, waiting, eating and drinking in any wording
+  ("sleep till nine", "make some eggs and coffee", "wait until dark") are
+  resolved by the game itself: the clock moves by the whole span, the body
+  gets the sleep or the meal, and the GM narrates what the game decided.
+  Every other action is timed by the GM, checked against the game's own
+  estimate from your words, so a night narrated is a night on the clock.
+  Exhaustion is not optional: at zero you pass out where you are. A handful
+  of shortcuts (`map`, `inventory`, `go to the marina`, `tune 162.4`, `save`)
+  fire only when their target is real; anything else goes to the GM
+  untouched. Start a line with `/` to force a shortcut.
 - **Status**: vitals as bars, conditions, the body diagram (regions tint by
   injury, pulse when infected, dash when treated), injuries with treatment
   buttons, illness, the clock, the alert level, and tasks resolving later.

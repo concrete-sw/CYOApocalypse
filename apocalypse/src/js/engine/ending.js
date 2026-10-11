@@ -57,6 +57,7 @@ export function finalizeDebrief(state, d, stats = computeStats(state)) {
   d.stats = stats;
   d.outcome = state.ended?.kind || 'retired';
   d.trueCause = str(t.apocalypse?.trueCause);
+  d.variant = str(t.variant); d.opening = str(t.seed?.opening);
   d.publicBelief = str(t.apocalypse?.publicBelief);
   d.wayOut = t.ending?.trueWayOut || null;
   d.timeline = asArray(t.timeline).map((e, i) => ({ day: e.day, event: e.event, visible: e.visible !== false, fired: state.events.fired.includes(i) }));
